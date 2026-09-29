@@ -21,9 +21,7 @@ isolation.
   otherwise). Orchestration is for a **database per tenant only**; schema per tenant is not supported
   (see [Schema per tenant](schema-per-tenant.md#tables-and-migrations)).
 - A reference to the provider package (`Tenantry.Pro.EfCore.SqlServer`, `.Npgsql`, or `.MySql`).
-- A licence, checked before any migration runs. Under the default `Warn` enforcement a missing or
-  expired licence is logged and migrations still run; under `Throw` it must be valid or within its
-  30-day grace period.
+- A valid licence key, checked before any migration runs.
 - A factory that builds your `DbContext` from a connection string.
 
 ## Registration
@@ -141,9 +139,8 @@ and tenants. With more than one instance, run migrations as a deployment step (a
   remaining tenants are not attempted (they are not reported as failures), and tenants already
   migrated stay migrated. A timeout inside one tenant's migration that does not come from your token is
   that tenant's failure and the run continues.
-- **Licence check.** The licence is checked once, up front. If it is missing or out of grace, an error
-  is logged and the run continues; only under `LicenseEnforcement.Throw` is `LicenseRequiredException`
-  thrown, before any tenant is touched.
+- **Licence check.** The licence is checked once, up front: a missing or invalid key throws
+  `LicenseRequiredException` before any tenant is touched.
 
 `MigrationReport<TKey>` aggregates the run:
 

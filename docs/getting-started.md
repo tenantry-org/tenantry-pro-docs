@@ -7,8 +7,9 @@ them all on startup. Schema-per-tenant and the other providers follow the same s
 
 ## 1. Install the packages
 
-Tenantry.Pro sits on top of Tenantry core, so you install both. For an ASP.NET Core app using SQL
-Server:
+Tenantry.Pro sits on top of Tenantry core, so you install both. The Pro packages come from a private
+feed: set it up first with [Installation](installation.md), which also covers CI and the licence key. For
+an ASP.NET Core app using SQL Server:
 
 ```bash
 dotnet add package Tenantry.AspNetCore            # Tenantry core: resolution + middleware
@@ -131,12 +132,11 @@ hits `app_globex`. Neither can see the other's rows because they are different d
 
 ## 5. Provide a licence key
 
-Pro features carry a signed licence key, configured with `pro.WithLicence(...)`. By default licence
-enforcement is **non-fatal**: a missing, invalid, or expired key is only logged and Pro features keep
-working — the real commercial gate is access to the private package feed, not runtime DRM. Opt into
-fail-fast checks with `pro.WithLicence(key, LicenseEnforcement.Throw)` if you want one. Store the real
-key outside source control — for example in user secrets or an environment variable bound to
-`Tenantry:Licence`. See [Licensing](licensing.md) for the full model.
+Pro needs your licence key, from your [Pro access page](https://tenantry.dev/dashboard/pro), configured
+with `pro.WithLicence(...)`. The key does not expire, so you set it once. Without a valid key the
+application does not start (`LicenseRequiredException`), so a missing or mistyped key shows up right away.
+Store the key outside source control — for example in user secrets or an environment variable bound to
+`Tenantry:Licence` — and give it to CI as a secret. See [Licensing](licensing.md) for the full model.
 
 ## Where to go next
 

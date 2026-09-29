@@ -1,0 +1,11 @@
+<Project>
+    <!-- Settings the samples share. Tenantry.Pro comes from the private package feed (nuget.config). -->
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <IsPackable>false</IsPackable>
+        <TenantryProVersion>0.4.0</TenantryProVersion>
+        <TenantryCoreVersion>0.4.0</TenantryCoreVersion>
+    </PropertyGroup>
+</Project>

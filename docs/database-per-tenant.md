@@ -160,8 +160,7 @@ public sealed class TenantAdminService(DatabaseProvisioningService<string> provi
 
 `ProvisionAsync`:
 
-1. checks the licence (logs an error if it is missing or out of grace; throws `LicenseRequiredException`
-   instead under `LicenseEnforcement.Throw`);
+1. checks the licence (throws `LicenseRequiredException` if the key is missing or invalid);
 2. looks the tenant up in your store, resolves its connection string, and extracts the database name;
 3. issues a provider-specific, **idempotent** `CREATE DATABASE` against a server/admin connection
    derived from the tenant connection string.

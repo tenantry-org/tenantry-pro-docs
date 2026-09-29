@@ -5,28 +5,18 @@ Tenantry core layer), see the [Tenantry core troubleshooting guide](https://gith
 
 ## `LicenseRequiredException` is thrown
 
-A licence-guarded operation (provisioning, migration orchestration, the lifecycle pipeline) ran
-without a usable licence **while you have opted into `LicenseEnforcement.Throw`**. Under the default
-`Warn` mode this is logged instead of thrown — drop the `Throw` argument from `WithLicence` if you do
-not want fail-fast behaviour.
+The application stopped at startup, or a licence-guarded operation (provisioning, migration orchestration,
+the lifecycle pipeline) refused to run, because the licence key is missing or invalid. The message says
+which; for an invalid key, the log says why it was rejected.
 
 - **No key configured** — call `pro.WithLicence(builder.Configuration["Tenantry:Licence"]!)` and
-  confirm the configuration value is actually present (check user secrets / environment binding).
-- **Wrong issuer or tampered key** — the JWT failed signature or issuer validation. Re-copy the key
-  exactly; it must be the full three-segment token.
-- **Grace period over** — the licence expired more than 30 days ago. Renew it. Within 30 days of
-  expiry, guarded operations still run (with a warning).
+  confirm the configuration value is actually present in this environment (user secrets locally, an
+  environment variable or secret in CI and production).
+- **Malformed, tampered or wrong key** — the JWT failed signature or issuer validation. Copy the key again
+  from your [Pro access page](https://tenantry.dev/dashboard/pro), in full: it is one three-segment token.
 
-Read-only `MigrationStatusTracker` never throws this — use it for monitoring regardless of licence
-state. See [Licensing](licensing.md).
-
-## Every request returns HTTP 503
-
-`app.UseLicenseCheck()` is enforcing the licence **and you have opted into `LicenseEnforcement.Throw`**,
-and the licence is missing/invalid or expired beyond grace. (Under the default `Warn` mode the
-middleware never returns 503 — it logs and passes the request through.) The 503 body and the logged
-error name the reason. Fix the key, switch to `Warn`, or remove `UseLicenseCheck()` if you only want
-the non-blocking startup log rather than hard per-request enforcement.
+Keys do not expire, so a key that worked keeps working. Read-only `MigrationStatusTracker` never throws
+this — use it for monitoring regardless of licence state. See [Licensing](licensing.md).
 
 ## `TenantNotResolvedException` when resolving a connection string
 
@@ -76,13 +66,16 @@ correct dependency for hosted services and any custom singleton that enumerates 
 
 ## Trim/AOT analyzer warnings (IL2026, IL3050)
 
-Expected on the EF Core features — audit logging, migration orchestration, the migration health
-check, and schema-per-tenant model building. EF Core relies on reflection and runtime code
+Expected where you call the EF Core features: `WithMigrationOrchestration`, `AddAuditLogging`, the
+migration status tracker and the migration health check. EF Core relies on reflection and runtime code
 generation, so these APIs are annotated `[RequiresDynamicCode]`/`[RequiresUnreferencedCode]` and are
-**not** Native-AOT compatible. The base `Tenantry.Pro` and `Tenantry.Pro.AspNetCore` packages
-(licensing, strategy resolution, caching/encryption, telemetry) are trim-friendly. If you publish with
-`PublishTrimmed`/`PublishAot`, scope those features out or suppress the warnings deliberately where you
-have accepted the constraint.
+**not** Native AOT-compatible; schema-per-tenant model caching is EF Core configuration and has EF Core's
+own limits. `Tenantry.Pro` and `Tenantry.Pro.AspNetCore` (licensing, the strategies, caching and
+encryption, the lifecycle pipeline, telemetry) are trim- and AOT-compatible: an app over them publishes
+with `PublishAot` without warnings. The lifecycle pipeline runs migrations only when
+`WithMigrationOrchestration` registered them, so its warning appears at that call. If you publish with
+`PublishTrimmed`/`PublishAot`, leave the EF Core features out, or suppress the warnings where you have
+accepted the constraint.
 
 ## Per-tenant metrics are missing or all show `tenant.id = unknown`
 

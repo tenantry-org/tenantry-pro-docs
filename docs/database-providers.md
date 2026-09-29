@@ -73,11 +73,11 @@ Oracle's provider on EF Core 8 or 9, and either provider on EF Core 11 (.NET 11)
 The integration suites run migration orchestration against a real database in a container, on each
 target framework: provisioning and migrating several tenant databases, a rerun that applies nothing, a
 tenant that fails (rejected credentials) while the others migrate and is then repaired and retried, and
-two runners migrating the same tenants at once. Recorded 27 September 2026.
+two runners migrating the same tenants at once. Recorded 29 September 2026.
 
 | Database | EF Core provider | .NET / EF Core | Result | Concurrent runners |
 |----------|------------------|----------------|--------|--------------------|
-| SQL Server 2022 | `Microsoft.EntityFrameworkCore.SqlServer` 8.0.10 / 9.0.5 / 10.0.12 | 8, 9, 10 | Passing | Serialised on EF Core 9 and 10; race on EF Core 8 |
+| SQL Server 2022 | `Microsoft.EntityFrameworkCore.SqlServer` 8.0.31 / 9.0.20 / 10.0.12 | 8, 9, 10 | Passing | Serialised on EF Core 9 and 10; race on EF Core 8 |
 | PostgreSQL 16 | `Npgsql.EntityFrameworkCore.PostgreSQL` 8.0.4 / 9.0.0 / 10.0.3 | 8, 9, 10 | Passing | Serialised on EF Core 9 and 10; race on EF Core 8 |
 | MySQL 8.4 | `Pomelo.EntityFrameworkCore.MySql` 8.0.2 / 9.0.0 | 8, 9 | Passing | Serialised on EF Core 9; race on EF Core 8 |
 | MySQL 8.4 | `MySql.EntityFrameworkCore` (Oracle) 10.0.9 | 10 | Passing | Serialised |
@@ -90,9 +90,9 @@ rather than documented by the providers. See
 
 ## Target frameworks
 
-The Pro packages multi-target **net8.0, net9.0, and net10.0**. Pick provider/EF Core package versions
-that match your target framework (EF Core 8 for net8.0, etc.), exactly as you would in any EF Core
-app.
+The Pro packages multi-target **net8.0, net9.0, and net10.0** (.NET 8 and 9 as legacy). Pick provider/EF
+Core package versions that match your target framework (EF Core 8 for net8.0, etc.), exactly as you would
+in any EF Core app. The supported versions and dependency ranges are in [Compatibility](compatibility.md).
 
 ## Writing a custom provider
 

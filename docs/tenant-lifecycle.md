@@ -125,8 +125,7 @@ public sealed class TenantOnboarding(
 
 A step that fails is captured in the result rather than thrown. `ProvisionAsync` throws in two cases:
 
-- `LicenseRequiredException`, up front, if the licence is missing or out of grace (only under
-  `LicenseEnforcement.Throw`), before any step runs.
+- `LicenseRequiredException`, up front, if the licence key is missing or invalid, before any step runs.
 - `OperationCanceledException` when the cancellation token is cancelled. The pipeline stops at once:
   steps that already completed are not undone, and later steps do not run. An
   `OperationCanceledException` that does *not* come from your token (for example an HTTP or command
