@@ -85,5 +85,5 @@ everything below the scope line behaves identically.
 - It does not provision or migrate tenants automatically on first request — provisioning and
   migration are explicit: run them as a deployment step, or at startup when you opt in with
   `o.OnStartup`.
-- It does not replace Tenantry core's resolution, storage, or row-level isolation — it composes with them.
+- It does not replace Tenantry core's resolution, storage, or shared-database isolation — it composes with them.
 - It does not provide an admin dashboard or UI.

@@ -85,6 +85,8 @@ app.MapGet("/settings", async (AppDbContext db, CancellationToken ct) =>
 
 await app.RunAsync();
 
+// A step's error message can name the database server, the database and the login: an admin endpoint of your own
+// would log it and return less.
 static object Report(TenantProvisioningResult<string> result) => new
 {
     result.TenantId,

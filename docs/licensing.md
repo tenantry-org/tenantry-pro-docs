@@ -59,7 +59,8 @@ example `ITenantMigrationRunner.GetStatusAsync` reports applied and pending migr
 ## When your subscription ends
 
 Your key keeps validating, so the versions of Pro you already have keep working. You lose access to the
-private package feed, so you cannot restore or update to versions of Pro released afterwards. If you
+private package feed, so restores from it fail, for the versions you have as for later ones: keep copies of the
+packages you build with, in an internal feed or a local package folder (see [Installation](installation.md#when-your-subscription-ends)). If you
 subscribe again, your Pro access page shows a new key.
 
 ## Reference

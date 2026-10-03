@@ -115,7 +115,10 @@ Keep a suspended tenant's database online, so it keeps receiving migrations: sus
 the tenant, not whether its database runs. A tenant whose database cannot be reached is reported as a
 failure on every run, which fails the deployment step below and, with `StartupMigrations.FailOnError`, stops
 startup. If you take a tenant's database offline (archived or dropped), remove the tenant from the store. To bring
-it back, restore the database, add the tenant back as inactive, run `MigrateTenantAsync`, then reactivate it.
+it back, restore the database, add the tenant back as inactive, run `MigrateTenantAsync`, then reactivate it. With
+Tenantry core's `CacheTenants`, call `ITenantStoreCache<TKey>.Invalidate` as you reactivate it, or it is served as
+inactive until its entry expires; with `CacheConnectionStrings`, call `IConnectionStringCache<TKey>.Invalidate` if the
+restored database's connection details differ.
 
 `MigrateAsync` in EF Core creates a tenant's database if it does not exist, so a mistyped or stale
 connection string gets a new, empty, fully migrated database rather than an error. Create databases with
@@ -125,8 +128,8 @@ store produces.
 ### Run as a deployment step (recommended)
 
 Migrate once per deployment, from one process, before the new version starts serving traffic: a CI/CD
-stage, a Kubernetes `Job` or init container. Run the application with the argument `migrate-tenants`; it
-migrates every tenant and exits, without starting the host:
+stage or a Kubernetes `Job` (not an init container, which runs in every replica). Run the application with the
+argument `migrate-tenants`; it migrates every tenant and exits, without starting the host:
 
 ```csharp
 await using var app = builder.Build();   // disposing it at exit writes out the last log messages
@@ -140,6 +143,13 @@ return 0;
 ```
 
 Each failure is logged, once, as an error, and the run ends with a summary: a warning if any failed.
+
+Run one migration step at a time: two runs at once, from overlapping deployments, race as several instances do (see
+[Multiple instances](#multiple-instances)). In CI, put the step in a concurrency group that queues a second run
+rather than cancelling the first: cancelling stops the process mid-migration, which on MySQL can leave a migration
+half applied. A Kubernetes `Job` that fails is retried up to its `backoffLimit` (6 by default); each retry runs the
+whole sweep again, which applies only what is still pending, so a tenant that failed for a lasting reason fails each
+time.
 
 ### Run at startup
 

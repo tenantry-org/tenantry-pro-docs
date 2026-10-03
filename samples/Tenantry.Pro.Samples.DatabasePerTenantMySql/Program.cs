@@ -39,8 +39,8 @@ builder.Services
 
 await using var app = builder.Build();   // disposing it at exit writes out the last log messages
 
-// The migration runner: run once per deployment (a CI/CD step, a Kubernetes Job or an init container) before
-// starting the new version, rather than on every instance at startup. It migrates every tenant and exits.
+// The migration runner: run once per deployment, from one process (a CI/CD step or a Kubernetes Job, not an init
+// container, which runs in every replica), before starting the new version. It migrates every tenant and exits.
 //   dotnet run -- migrate-tenants
 if (await app.RunTenantMigrationsIfRequestedAsync(args) is { } exitCode)
     return exitCode;
