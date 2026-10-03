@@ -1,89 +1,155 @@
 # Health checks
 
-`Tenantry.Pro.HealthChecks` adds ASP.NET Core health checks that probe **every** tenant database: one
-verifies connectivity, the other reports pending EF Core migrations. Both enumerate tenants from your
-store and report per-tenant detail in the health check data dictionary.
+`Tenantry.Pro.EfCore` adds ASP.NET Core health checks that probe **every** tenant database: one verifies
+connectivity, the other reports pending EF Core migrations. Both go through your own `DbContext`, created in each
+tenant's scope as your application creates it, read each database (or schema) once however many tenants share it,
+and report per-tenant detail in the health check data dictionary.
 
-## Install
+> **For monitoring, not for liveness or readiness probes.** One unreachable tenant database makes the
+> connectivity check fail. Every replica checks the same databases, so a probe that fails on these checks fails on
+> every replica at once and takes the whole application out of service for all tenants. The checks report
+> Degraded by default, which ASP.NET Core answers with `200`. Serve them on a separate, protected endpoint
+> for your monitoring system (see [Exposing the checks](#exposing-the-checks)).
 
-```bash
-dotnet add package Tenantry.Pro.HealthChecks
+## Registration
+
+```csharp
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+
+builder.Services.AddHealthChecks()
+    .AddTenantDatabaseCheck<AppDbContext>()      // every tenant database is reachable
+    .AddTenantMigrationCheck<AppDbContext>();    // every tenant database or schema has every migration applied
 ```
 
-Both checks build on database-per-tenant, so `pro.UseDatabasePerTenant(...)` must be configured with a
-`GetConnectionString` delegate.
+The checks need Tenantry.Pro (`UsePro` in `AddTenantry`); without it they report their failure status, saying so.
+They get the context from each tenant's scope, as a request does (or from its `IDbContextFactory<TContext>` when it
+cannot be created there; see [Tenant migrations](migration-orchestration.md#registration)), so register it so that a
+tenant's scope gives the tenant's own database: Tenantry core's `AddDbContextPerTenantDatabase`, or a context with
+`UseTenantry()` and schema per tenant. Both take the standard health check arguments, and options:
+
+```csharp
+builder.Services.AddHealthChecks()
+    .AddTenantDatabaseCheck<AppDbContext>(
+        name: "tenant-databases",                          // the default
+        failureStatus: HealthStatus.Degraded,              // the default
+        tags: ["tenantry", "database"],                    // the default
+        timeout: TimeSpan.FromSeconds(30),                 // the whole check (default 30 s)
+        configure: o =>
+        {
+            o.MaxConcurrency = 8;                          // databases checked at once (default 8)
+            o.DatabaseTimeout = TimeSpan.FromSeconds(5);    // per database, creating its context included (default 5 s)
+            o.CacheDuration = TimeSpan.FromSeconds(30);     // how long a result is reported (default 30 s)
+        });
+```
 
 ## Database connectivity check
 
-`AddTenantryDatabaseCheck<TKey>` opens an ADO.NET connection to each tenant's database. Supply a
-`ConnectionFactory` that turns a connection string into the right `DbConnection` for your provider:
-
-```csharp
-using Microsoft.Data.SqlClient;
-using Tenantry.Pro.HealthChecks.Extensions;
-
-builder.Services.AddHealthChecks()
-    .AddTenantryDatabaseCheck<string>(opts =>
-    {
-        opts.ConnectionFactory = cs => new SqlConnection(cs);     // Npgsql: new NpgsqlConnection(cs)
-        opts.ConnectionTimeout = TimeSpan.FromSeconds(5);          // per-tenant open timeout (default 5s)
-        opts.Tags = ["tenantry", "database"];                      // health check tags
-    });
-```
-
-Result semantics:
+`AddTenantDatabaseCheck<TContext>` opens a connection through `TContext` for each tenant, once for each distinct
+database (tenants whose context has the same connection string share it, whatever their schema):
 
 | Condition | Status |
 |-----------|--------|
 | All tenant databases reachable | **Healthy** |
-| One or more unreachable | **Unhealthy** (data lists which tenants failed and why) |
-| No tenants registered | **Healthy** ("No tenants registered.") |
-| `ConnectionFactory` / `GetConnectionString` not configured | **Degraded** (a configuration problem, not a tenant outage) |
+| One or more unreachable | `failureStatus`, **Degraded** by default (data lists which tenants failed and why) |
+| No tenants registered | **Healthy** ("No tenants.") |
 
-The check is registered under the name `tenantry-databases`.
+Each tenant's entry in the data (`tenant:{id}`, the id formatted with the invariant culture) is `reachable`, or `unreachable:` and the provider's error. A tenant
+whose context cannot be created, because its connection string cannot be read, say, counts as unreachable.
 
 ## Migration check
 
-`AddTenantryMigrationCheck<TKey, TContext>` queries each tenant's pending migrations. Supply a factory
-that builds your `DbContext` from a connection string:
-
-```csharp
-builder.Services.AddHealthChecks()
-    .AddTenantryMigrationCheck<string, AppDbContext>(
-        cs => new AppDbContext(
-            new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(cs).Options));
-```
-
-Result semantics:
+`AddTenantMigrationCheck<TContext>` reads each tenant's pending migrations, once for each distinct database and
+schema, with the context the [migration runner](migration-orchestration.md) uses: as `pro.AddMigrations<TContext>()`
+creates it, if you called it, otherwise as your application registers it.
 
 | Condition | Status |
 |-----------|--------|
-| All tenant databases up to date | **Healthy** |
-| One or more have pending migrations | **Degraded** (data lists pending migration names per tenant) |
-| Error querying a tenant | counted as needing attention; reported in data |
+| All tenant databases or schemas up to date | **Healthy** |
+| One or more have pending migrations, or could not be read | `failureStatus`, **Degraded** by default |
 
-Registered under the name `tenantry-migrations`. Because it inspects EF Core migration metadata, it
-uses reflection and is annotated `[RequiresDynamicCode]`/`[RequiresUnreferencedCode]` — expect the
-AOT/trimming analyzer to flag it.
+Each tenant's entry in the data is `up to date`, the number and names of its pending migrations, or `error:` and why
+they could not be read. The check is named `tenant-migrations` and tagged `tenantry` and `migrations` by default.
+Because it reads EF Core migration metadata, it uses reflection and is annotated
+`[RequiresDynamicCode]`/`[RequiresUnreferencedCode]`: expect the AOT and trimming analyzers to flag it.
 
-## Exposing the endpoint
+With ASP.NET Core's defaults, Healthy and Degraded respond `200` and Unhealthy responds `503`, so a
+monitor that reads only the status code sees neither pending migrations nor unreachable tenant databases.
+Read the response body, or map Degraded to `503` on the monitoring endpoint (below).
+
+## What the checks cover
+
+- **Every tenant the store lists**, including tenants that are suspended or still provisioning (the store
+  must list them; see [Tenant lifecycle](tenant-lifecycle.md#when-provisioning-fails)). A tenant whose
+  database does not exist yet shows as unreachable in the connectivity check, and with every migration
+  pending in the migration check. Keep suspended tenants' databases online (see
+  [Tenant migrations](migration-orchestration.md#running-migrations)), or every check reports them.
+- **How often they read the databases.** Each check keeps its result for `CacheDuration` (30 seconds by default),
+  and polls that arrive while it runs wait for that run, so a monitor polling every few seconds does not reach every
+  tenant database each time. Set it to zero to check on every request.
+- **How long a check takes.** Each check reads the first tenant's database alone, then up to `MaxConcurrency` at a
+  time, and waits up to `DatabaseTimeout` for each (some EF Core providers set up shared state the first time a
+  context is used, without a lock, so one context is created before any other). With every database unreachable a
+  check takes about (1 + (databases − 1) ÷ `MaxConcurrency`) × `DatabaseTimeout`; the check's `timeout` (30 seconds
+  by default) ends it sooner, and reports it as failed. The two
+  checks run at the same time, so a request takes about as long as the slower one. Allow for your tenant count in
+  the monitor's timeout.
+
+## Exposing the checks
+
+Keep liveness and readiness to checks about the process itself, and put the tenant checks on their own
+endpoint:
 
 ```csharp
 var app = builder.Build();
 
-app.MapHealthChecks("/health");
+// Liveness: the process is running. Runs no checks.
+app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
 
-// Or split readiness from liveness using the tags above:
+// Readiness: only your own process-level checks, tagged "ready". Never the tenant checks.
 app.MapHealthChecks("/health/ready", new HealthCheckOptions
 {
-    Predicate = check => check.Tags.Contains("tenantry")
+    Predicate = check => check.Tags.Contains("ready")
 });
+
+// Monitoring: every tenant's status, for your monitoring system only.
+app.MapHealthChecks("/health/tenants", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("tenantry"),
+    ResultStatusCodes = { [HealthStatus.Degraded] = StatusCodes.Status503ServiceUnavailable }
+}).RequireAuthorization("HealthMonitoring");   // a policy you register with AddAuthorization
 ```
 
-A `GET /health` returns the aggregate status; enable a detailed response writer to surface the
-per-tenant data dictionary if you want tenant-level visibility.
+Do not tag the tenant checks `ready`. If you call `RequireTenantByDefault()`, add
+`.AllowMissingTenant()` to each endpoint, or requests without a tenant get `400`. On ASP.NET Core 9 and later,
+`.DisableHttpMetrics()` keeps an endpoint out of the request metrics (see [Telemetry](telemetry.md#cardinality)).
+
+### Protect the monitoring endpoint
+
+The per-tenant data names every tenant (`tenant:{TenantId}`) and carries the provider's error message for
+each failure, which can include host names, database names and login names; the migration check adds
+pending migration names. The default response writer returns only the overall status, but a detailed
+writer, such as one that feeds a dashboard, returns all of it. (`UIResponseWriter.WriteHealthCheckUIResponseNoExceptionDetails`
+from AspNetCore.HealthChecks.UI.Client does not hide it: the text is in the data, not in the exception.)
+Even with the default writer, a request after the cached result expires opens a connection to every tenant
+database.
+
+So require authorization on the endpoint, as above, and keep it off the public internet: block
+`/health/tenants` at your ingress or load balancer. Listening on a second, internal port is not enough on
+its own, because Kestrel serves every endpoint on every port it listens on; if you use one, check the port
+the request arrived on in your authorization policy, for example
+`policy.RequireAssertion(c => c.Resource is HttpContext http && http.Connection.LocalPort == 8081)`.
+`RequireHost` is not access control, because it trusts the request's `Host` header.
+
+To keep the checks off HTTP altogether, run them on a schedule instead: an `IHealthCheckPublisher`, with
+`HealthCheckPublisherOptions.Predicate` selecting the `tenantry` tag, receives each report and can send it
+to your monitoring. Set `HealthCheckPublisherOptions.Timeout` (30 seconds by default) above the checks'
+worst case (see [What the checks cover](#what-the-checks-cover)): a run that exceeds it is cancelled and
+nothing is published. Alert when reports stop arriving, and run the publisher on one instance, since each
+instance would otherwise probe every tenant database.
 
 ## See also
 
-- [Database per tenant](database-per-tenant.md) — the connection-string source these checks use.
-- [Migration orchestration](migration-orchestration.md) — the same pending-migration information, plus the ability to apply it.
+- [Database per tenant](database-per-tenant.md) — the per-tenant context these checks use.
+- [Tenant migrations](migration-orchestration.md) — the same pending-migration information, plus the ability to apply it.
+- [Tenant stores](https://github.com/tenantry-org/tenantry-core/blob/master/docs/tenant-stores.md#suspended-and-inactive-tenants) (Tenantry core) — why the store lists suspended tenants.

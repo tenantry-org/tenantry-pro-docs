@@ -85,31 +85,37 @@ Restart your terminal and IDE so they pick the variables up.
 ```bash
 dotnet add package Tenantry.AspNetCore            # Tenantry core, from nuget.org
 dotnet add package Tenantry.Pro                    # from the private feed
-dotnet add package Tenantry.Pro.EfCore.SqlServer   # from the private feed
+dotnet add package Tenantry.Pro.EfCore             # from the private feed
 ```
 
 [Getting started](getting-started.md) lists which packages each setup needs.
 
 ## 4. Configure the licence key
 
-Pro reads the key you pass to `pro.WithLicence(...)`. The examples in these docs read it from the
-configuration key `Tenantry:Licence`:
+`UsePro` reads the key from the configuration key `Tenantry:License` when the application starts, so it
+needs no code:
 
 ```csharp
-tenant.UsePro(pro =>
-{
-    pro.WithLicence(builder.Configuration["Tenantry:Licence"]!);
-    // …
-});
+builder.Services.AddTenantry<string>(tenant => tenant
+    .ResolveFromHeader("X-Tenant-Id")
+    .UseStore<MyTenantStore>()
+    .UsePro());   // the licence key comes from Tenantry:License
 ```
 
-Keep the key out of source control. Locally, use user secrets:
+If the key comes from somewhere your configuration cannot read, pass it with `pro.UseLicenseKey(key)` instead.
+
+Keep the key out of source control. Locally, use user secrets, from your application's project directory
+(`init` adds the project's `UserSecretsId`, once):
 
 ```bash
-dotnet user-secrets set "Tenantry:Licence" "<your licence key>"
+dotnet user-secrets init
+dotnet user-secrets set "Tenantry:License" "<your licence key>"
 ```
 
-Anywhere else, set the environment variable `Tenantry__Licence` (two underscores stand for the `:`), or
+User secrets are read only when the application runs in the `Development` environment, as `dotnet run`
+does with the launch profile of a new web project; elsewhere, use the environment variable.
+
+Anywhere else, set the environment variable `Tenantry__License` (two underscores stand for the `:`), or
 use your secrets vault's configuration provider. Without a valid key the application does not start, so a
 missing key shows up straight away.
 
@@ -137,11 +143,11 @@ jobs:
       - run: dotnet build --no-restore
       - run: dotnet test --no-build
         env:
-          Tenantry__Licence: ${{ secrets.TENANTRY_LICENCE }}
+          Tenantry__License: ${{ secrets.TENANTRY_LICENSE }}
 ```
 
 Other CI systems work the same way: set `TENANTRY_GITHUB_USERNAME` and `TENANTRY_GITHUB_PAT` for the
-restore, and `Tenantry__Licence` for anything that starts the application.
+restore, and `Tenantry__License` for anything that starts the application.
 
 In a **Docker build**, pass the token as a build secret rather than a build argument, so it is not kept in
 an image layer:
@@ -161,7 +167,7 @@ docker build --secret id=tenantry_pat,env=TENANTRY_GITHUB_PAT .
 |-----------|------------|
 | The token is about to expire | Create a new classic token with `read:packages` from the same account, then update the environment variable and the CI secret. Nothing else changes. |
 | The token may have leaked | [Revoke it on GitHub](https://github.com/settings/tokens) straight away, then create a new one. A token only reads packages, but anyone holding it can download Pro. |
-| You want a different GitHub account to hold access | Connect the new account on your Pro access page and accept its invitation. The previous account loses access to the feed, so create the token from the new account and update `TENANTRY_GITHUB_USERNAME`. |
+| You want a different GitHub account to hold access | Sign in to the new account on github.com, choose **Use another GitHub account** on your Pro access page, and accept the new account's invitation. The previous account keeps access until the new one is connected, then loses it, so create the token from the new account and update `TENANTRY_GITHUB_USERNAME`. |
 | The licence key | It does not expire and stays the same through renewals, so it needs no rotation. If your subscription ends and you subscribe again, the Pro access page shows a new key. |
 
 Access to the feed follows **one GitHub account per subscription**: the one connected on the Pro access
@@ -180,7 +186,7 @@ copies of the packages you use, for example in your own internal feed or a commi
 | `NU1101: Unable to find package Tenantry.Pro. No packages exist with this id in source(s): tenantry-pro` | The feed did not let this token see the package. GitHub reports a bad token this way rather than with a 401, so check in order: the environment variables are set in this shell or CI step; the token is a classic token with `read:packages` and has not expired or been revoked; it belongs to the account connected on the Pro access page; that account has accepted the `tenantry-org` invitation (the Pro access page shows its state); the subscription is active. |
 | `401 Unauthorized` or `403 Forbidden` from `nuget.pkg.github.com` | The same checks as above. |
 | `NU1101: Unable to find package Tenantry.Pro` naming only nuget.org | The `tenantry-pro` source or its `packageSourceMapping` patterns are missing, or another `nuget.config` with `<clear />` is taking precedence. `dotnet nuget list source` shows the sources in effect. |
-| `LicenseRequiredException` at startup | No licence key reached `pro.WithLicence`, or it was mistyped. See [Licensing](licensing.md). |
+| `LicenseRequiredException` at startup | No licence key reached the `Tenantry:License` setting, or it was mistyped. See [Licensing](licensing.md). |
 
 ## See also
 

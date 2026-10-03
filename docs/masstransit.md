@@ -1,101 +1,185 @@
 # MassTransit Integration
 
-Use this package to propagate the current tenant context across MassTransit message boundaries.
-The tenant ID is stamped as a message header when publishing or sending, and the tenant scope
-is restored from that header when the message is consumed.
-
-## What Tenantry.Pro.MassTransit Provides
-
-- `TenantPublishFilter<TKey>` — adds the tenant ID header when messages are published
-- `TenantSendFilter<TKey>` — adds the tenant ID header when messages are sent point-to-point
-- `TenantConsumeFilter<TKey>` — restores the tenant scope from the header when consuming
-- `pro.AddMassTransitTenantFilters()` — registers all three filters in DI
-- `x.AddTenantryConsumeFilter()` — registers the global consume endpoint callback (TKey resolved from DI)
-- `cfg.UseTenantryPro(ctx)` — wires the publish and send filters into the pipeline (TKey resolved from DI)
-
-The message header key is `tenantry-tenant-id` (available as `TenantPublishFilter<TKey>.HeaderKey`).
+A message published or sent while a tenant is current carries that tenant in a header, and is consumed as it:
+the consumer, and the scoped services MassTransit creates it with, see the tenant in `ITenantContext<TKey>`. A
+message the consumer publishes or sends carries the same tenant, and so does a routing slip's every activity. A
+message can also be published or sent for a tenant by name. The
+[MassTransitMessaging sample](../samples/Tenantry.Pro.Samples.MassTransitMessaging) runs on the in-memory transport.
 
 ## Requirements
 
 - `Tenantry.Pro.MassTransit` NuGet package
-- MassTransit 8.x
+- MassTransit 8.1 or later 8.x
 
 ## Registration
 
 ```csharp
 using MassTransit;
-using Tenantry.Pro;
-using Tenantry.Pro.MassTransit.Extensions;
 
-// 1. Register Tenantry with MassTransit filters
-builder.Services.AddTenantry<string>(tenant =>
-{
-    tenant.ResolveFromHeader("X-Tenant-Id");
-    tenant.UseStore<MyTenantStore>();
-    tenant.UsePro(pro =>
-    {
-        pro.WithLicence(builder.Configuration["Tenantry:Licence"]!);
-        pro.AddMassTransitTenantFilters();   // registers filter singletons in DI
-    });
-});
+builder.Services.AddTenantry<string>(tenant => tenant
+    .ResolveFromHeader("X-Tenant-Id")
+    .UseStore<MyTenantStore>()
+    .UsePro(pro => pro.AddMassTransitPropagation()));
 
-// 2. Configure MassTransit (TKey is resolved from DI by the non-generic overloads)
 builder.Services.AddMassTransit(x =>
 {
-    x.AddTenantryConsumeFilter();           // global consume callback for all endpoints
-
     x.AddConsumer<MyOrderConsumer>();
 
-    x.UsingRabbitMq((ctx, cfg) =>
+    x.UsingRabbitMq((context, cfg) =>
     {
         cfg.Host("rabbitmq://localhost");
-        cfg.UseTenantryPro(ctx);            // publish + send filters
-        cfg.ConfigureEndpoints(ctx);
+        cfg.UseTenantry(context);
+        cfg.ConfigureEndpoints(context);
     });
 });
 ```
+
+`pro.AddMassTransitPropagation()` registers the integration; `cfg.UseTenantry(context)` adds Tenantry's publish,
+send, consume and routing-slip activity filters to the bus, and calling it again for the same bus has no further
+effect. It covers every receive endpoint, whether `ConfigureEndpoints` or your own `cfg.ReceiveEndpoint(…)`
+configures it, before or after the call: consumers and sagas (through MassTransit's scoped filters, which it
+creates in each message's scope), handlers (`e.Handler<T>(…)`), and routing-slip activities, as they execute and as
+they compensate.
+
+If `pro.AddMassTransitPropagation()` is called but the bus configuration never calls `cfg.UseTenantry(context)`,
+the application fails to start with an `InvalidOperationException` that names the missing call: its messages
+would otherwise be consumed without their tenant. With more than one bus (MassTransit's MultiBus,
+`AddMassTransit<TBus>`), call `cfg.UseTenantry(context)` in each bus's configuration: the application fails to
+start if any bus does not, and the error names the buses.
 
 ## Behaviour
 
+The tenant's id is carried in the `TenantPropagation.HeaderName` header (`tenantry-tenant-id`).
+
 | Scenario | Publish / Send | Consume |
 |----------|---------------|---------|
-| Active tenant scope | Header `tenantry-tenant-id` added | Scope restored for consumer |
-| No tenant scope | Header omitted | Missing-tenant policy applies (default: warn, run without scope) |
-| Header present but tenant not in store | — | Missing-tenant policy applies (default: warn, run without scope) |
+| A tenant is current | Header added | The consumer runs as that tenant |
+| No tenant is current | No header | `OnMissingTenant` applies (default `Warn`: the consumer runs without a tenant, and a warning is logged) |
+| The header names a tenant not in the store, or is not a valid id | — | `OnUnresolvedTenant` applies (default `Reject`: the message faults) |
+| Tenant is in the store but suspended by your app | Header added | The consumer runs as that tenant: the filter does not check status, so [your consumer must check](background-jobs.md#suspended-tenants) |
 
-## Missing-tenant policy
+A message a consumer publishes or sends carries the consumed message's tenant even when it is sent after the
+consumer returns, as MassTransit's in-memory outbox (`UseInMemoryOutbox`) sends it: MassTransit copies the consumed
+message's headers onto the messages published or sent from it.
 
-When a consumed message has no resolvable tenant, `AddMassTransitTenantFilters` decides what to do via
-`TenantPropagationOptions.OnMissingTenant`:
+While a consumer runs as its tenant, its logs carry a `TenantId` scope, and, if tracing records spans, the
+message's receive span is tagged `tenant.id`. The span MassTransit starts for the consumer is a child of it and is
+not tagged; a routing-slip activity's span is ([Telemetry](telemetry.md#logs-and-traces)).
+
+## Publishing or sending for a tenant
+
+To publish or send on a tenant's behalf from code that runs without one (an administrator's request, a system
+task), or for another tenant than the current one, set the tenant in the callback `Publish` or `Send` takes:
 
 ```csharp
-pro.AddMassTransitTenantFilters(o => o.OnMissingTenant = MissingTenantBehavior.Skip);
+using MassTransit;
+
+public sealed class OrderReminders(IPublishEndpoint publishEndpoint)
+{
+    public Task RemindAsync(string tenantId, Guid orderId) =>
+        publishEndpoint.Publish(new OrderPlaced(orderId), context => context.SetTenant(tenantId));
+}
 ```
 
-`Allow` runs the consumer without a scope silently; `Warn` (default) does the same and logs; `Reject`
-throws (the message goes to MassTransit's retry/error handling); `Skip` acknowledges and drops the
-message without running the consumer. The same option exists on every Tenantry.Pro integration and
-mirrors core's `EfCoreIsolationOptions.OnMissingTenant`.
+The message is consumed as that tenant whichever tenant is current, also from a consumer, and also through the
+in-memory outbox: MassTransit runs the callback after the bus's filters, Tenantry's among them. The tenant is looked up when the
+message is consumed, so `OnUnresolvedTenant` applies to an id the store does not have. `SetTenant` refuses the id
+Tenantry reserves for "no tenant" (`Guid.Empty`, `0`, an empty string).
+
+## Routing slips
+
+A routing slip (MassTransit Courier) carries the tenant that was current when it was executed (`bus.Execute`). Each
+activity executes, and compensates, as that tenant: the activity, and the scoped services MassTransit creates it
+with, see it in `ITenantContext<TKey>`. Each activity passes the tenant on to the next, and to the events the
+routing slip publishes. To execute a routing slip for a tenant by name, send it to its first activity, as
+`Execute` does, with `SetTenant`:
+
+```csharp
+using MassTransit;
+using MassTransit.Courier.Contracts;
+
+public sealed class Fulfilment(ISendEndpointProvider sendEndpoints)
+{
+    public async Task StartAsync(string tenantId, RoutingSlip routingSlip)
+    {
+        var firstActivity = await sendEndpoints.GetSendEndpoint(routingSlip.GetNextExecuteAddress()!);
+        await firstActivity.Send(routingSlip, context => context.SetTenant(tenantId));
+    }
+}
+```
+
+`OnMissingTenant` and `OnUnresolvedTenant` apply to each activity as to a consumer, except that an activity that
+does not run (`Skip`) returns no result, so MassTransit faults the routing slip: the activities before it
+compensate, and `RoutingSlipFaulted` is published. Under `Reject`, the routing slip faults in the same way. When an
+activity compensates and its tenant cannot be made current (the store no longer has it, say), `Skip` and `Reject`
+both make MassTransit record the compensation as failed (`RoutingSlipActivityCompensationFailed`) and stop: the
+activities before it are not compensated.
+
+## Batch consumers
+
+A batch consumer (`IConsumer<Batch<T>>`) runs as one tenant for the whole batch, so a batch must hold messages of
+one tenant only. A batch whose messages carry different tenants, or some a tenant and some none, fails without being
+consumed. Group the consumer's batches by the tenant header, and each batch is consumed as its tenant (messages
+without a tenant are batched together):
+
+```csharp
+using MassTransit;
+using Tenantry.Pro;
+
+builder.Services.AddMassTransit(x =>
+{
+    x.AddConsumer<OrderBatchConsumer>(c => c.Options<BatchOptions>(o => o
+        .SetMessageLimit(100)
+        .GroupBy<OrderPlaced, string>(m => m.Headers.Get<string>(TenantPropagation.HeaderName)!)));
+
+    x.UsingRabbitMq((context, cfg) =>
+    {
+        cfg.UseTenantry(context);
+        cfg.ConfigureEndpoints(context);
+    });
+});
+
+public class OrderBatchConsumer : IConsumer<Batch<OrderPlaced>>
+{
+    public Task Consume(ConsumeContext<Batch<OrderPlaced>> context) => Task.CompletedTask;   // runs as the batch's tenant
+}
+```
+
+## Messages without a tenant, or with one that cannot be found
+
+Two settings decide what happens to a consumed message whose tenant cannot be made current:
+
+- `OnMissingTenant`: the message carries no tenant. Default `Warn`.
+- `OnUnresolvedTenant`: the message carries a tenant id that the store does not have, or that is not a valid id
+  of the key type. Default `Reject`, so the message is never consumed as no tenant.
+
+```csharp
+using Tenantry.Pro;
+
+pro.AddMassTransitPropagation(o => o.OnMissingTenant = TenantPropagationBehavior.Skip);
+```
+
+| `TenantPropagationBehavior` | Effect |
+|-------------------------|--------|
+| `Allow` | Run the consumer without a tenant, silently. |
+| `Warn` | Run the consumer without a tenant, and log a warning. |
+| `Skip` | Do not run the consumer, and log a warning. The message is not consumed, so MassTransit moves it to the endpoint's `_skipped` queue. (A routing slip faults instead: see [Routing slips](#routing-slips).) |
+| `Reject` | Throw `TenantNotResolvedException` (`TenantNotFoundException` for a tenant the store does not have). The message faults as if the consumer had thrown: your message retry policy applies, then MassTransit moves it to the endpoint's `_error` queue. |
+
+The same settings exist on every Tenantry.Pro integration, each set separately.
 
 ## Accessing the tenant inside a consumer
 
 ```csharp
+using Tenantry;
+
 public class MyOrderConsumer(ITenantContext<string> tenantContext) : IConsumer<OrderPlaced>
 {
     public Task Consume(ConsumeContext<OrderPlaced> context)
     {
-        // tenantContext.CurrentTenantId is set from the message header
+        // The tenant the message was published for
         var tenantId = tenantContext.CurrentTenantId;
         return Task.CompletedTask;
     }
 }
 ```
-
-## Limitations
-
-- The consume filter restores the scope for the duration of the consumer's execution only.
-  Any `IPublishEndpoint`/`ISendEndpoint` calls within the consumer will automatically stamp
-  the restored tenant ID on outgoing messages.
-- If your consumer publishes additional messages and you want those downstream messages to carry
-  the same tenant, ensure the tenant scope is active when publishing (which it will be, as long
-  as `AddTenantryConsumeFilter` is registered).

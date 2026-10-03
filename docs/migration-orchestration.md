@@ -1,185 +1,287 @@
-# Migration orchestration
+# Tenant migrations
 
-When you run database-per-tenant, every tenant has its own database — and every one of them needs
-your EF Core migrations applied. Migration orchestration applies pending migrations across **all**
-tenant databases (or a single one), on demand or automatically at startup, with per-tenant failure
-isolation.
+Every tenant's database, or schema, needs your EF Core migrations applied. `pro.AddMigrations<TContext>()` applies
+them for **all** tenants (or one), through your own context, once for each distinct database or schema, with each
+database's failure kept to itself: as a deployment step, at startup, and when a new tenant is provisioned.
 
 ## What it provides
 
-- `MigrationOrchestratorService<TKey, TContext>` — applies migrations to all tenants
-  (`MigrateAllAsync`) or one tenant (`MigrateTenantAsync`).
-- `MigrationStatusTracker<TKey, TContext>` — reports applied and pending migrations per tenant
-  (read-only, **no licence required**).
-- Optional startup execution via `runAtStartup: true`, with `failStartupOnMigrationError: true` to stop
-  the application from starting when a tenant fails.
-- `MigrationReport<TKey>` / `MigrationResult<TKey>` / `MigrationStatusEntry<TKey>` result types.
+- `pro.AddMigrations<TContext>(o => …)`: registers the runner, adds the `Migrations` step to
+  [tenant provisioning](tenant-lifecycle.md), optionally migrates at startup (`o.OnStartup`), and sets how many
+  databases or schemas are migrated at once (`o.MaxConcurrency`).
+- `ITenantMigrationRunner<TKey>`: applies migrations for every tenant (`MigrateAllAsync`, optionally reporting each
+  result as it completes) or one (`MigrateTenantAsync`), and reads what is applied and pending (`GetStatusAsync`,
+  `GetTenantStatusAsync`; read-only, **no licence required**).
+- `app.RunTenantMigrationsIfRequestedAsync(args)`: the deployment step.
+- `MigrationReport<TKey>`, `MigrationResult<TKey>` and `MigrationStatusEntry<TKey>` result types.
 
 ## Requirements
 
-- `pro.UseDatabasePerTenant(...)` must be configured first (orchestration throws at registration
-  otherwise). Orchestration is for a **database per tenant only**; schema per tenant is not supported
-  (see [Schema per tenant](schema-per-tenant.md#tables-and-migrations)).
-- A reference to the provider package (`Tenantry.Pro.EfCore.SqlServer`, `.Npgsql`, or `.MySql`).
-- A valid licence key, checked before any migration runs.
-- A factory that builds your `DbContext` from a connection string.
+- A reference to `Tenantry.Pro.EfCore`, and to the EF Core provider your context uses.
+- The context registered so that a tenant's scope gives the tenant's own database or schema: with Tenantry core's
+  `AddDbContextPerTenantDatabase` for a database per tenant, or with `UseTenantry()` and
+  [schema per tenant](#schema-per-tenant).
+- A valid licence key, checked before any migration runs. Reading the status needs none.
 
 ## Registration
 
 ```csharp
 using Microsoft.EntityFrameworkCore;
-using Tenantry.Pro;
-using Tenantry.Pro.EfCore.SqlServer.Extensions;
+using Tenantry;
+using Tenantry.Pro.EfCore;
 
-builder.Services.AddTenantry<string>(tenant =>
-{
-    tenant.ResolveFromHeader("X-Tenant-Id");
-    tenant.UseStore<MyTenantStore>();
-
-    tenant.UsePro(pro =>
-    {
-        pro.WithLicence(builder.Configuration["Tenantry:Licence"]!);
-
-        pro.UseDatabasePerTenant(opts =>
-            opts.GetConnectionString = t =>
-                $"Server=.;Database=app_{t.TenantId};Integrated Security=true;TrustServerCertificate=True");
-
-        pro.WithMigrationOrchestration<string, AppDbContext>(
-            cs => new AppDbContext(
-                new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(cs).Options),
-            runAtStartup: false);   // true migrates every tenant database before the app accepts traffic
-    });
-});
+builder.Services.AddTenantry<string>(tenant => tenant
+    .ResolveFromHeader("X-Tenant-Id")
+    .UseStore<MyTenantStore>()
+    .UseConnectionStrings(opts =>
+        opts.GetConnectionString = t =>
+            $"Server=.;Database=app_{t.TenantId};Integrated Security=true;TrustServerCertificate=True")
+    .UsePro(pro => pro.AddMigrations<AppDbContext>())
+    .AddDbContextPerTenantDatabase<AppDbContext>((_, options) => options.UseSqlServer()));
 ```
 
-The factory receives a per-tenant connection string and returns a configured `DbContext`. The
-returned context is disposed after each tenant's migration run, so build a fresh one each call.
+The runner gets the context from each tenant's scope, as a request does. When it cannot be created there, as with
+`AddDbContextPerTenantDatabase` and only an asynchronous connection string (`GetConnectionStringAsync`), it comes from
+the application's `IDbContextFactory<TContext>`, which creates it with the application's root services, so its
+constructor must not need scoped ones. To apply migrations with other credentials than the application's, such as a
+login allowed to change the schema, create the context yourself; it is disposed after use:
+
+```csharp
+tenant.UsePro(pro => pro.AddMigrations<AppDbContext>(o => o.CreateContext = sp =>
+{
+    var current = sp.GetRequiredService<ITenantContext<string>>().CurrentTenant!;
+    return new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+        .UseSqlServer($"Server=.;Database=app_{current.TenantId};User Id=migrator;Password={adminPassword}")
+        .Options);
+}));
+```
+
+With schema per tenant, build that context with `UseApplicationServiceProvider(sp)` and `UseTenantry()` too, so it
+gets the tenant's schema; a context without them is refused for a tenant that has a schema, rather than migrating the
+database's default schema.
+
+Call `AddMigrations` once for each context to migrate. Each runs in the order added, and each is a provisioning step.
 
 ## Running migrations
 
-Inject `MigrationOrchestratorService<TKey, TContext>` from an admin endpoint or a background job:
+Inject `ITenantMigrationRunner<TKey>` in an admin endpoint or a background job:
 
 ```csharp
-public sealed class MigrationAdminService(MigrationOrchestratorService<string, AppDbContext> orchestrator)
+public sealed class MigrationAdminService(ITenantMigrationRunner<string> migrations)
 {
-    // Migrate every tenant database. Per-tenant failures are captured in the report; cancelling ct stops the run.
+    // Every tenant. Each database's failure is in the report; cancelling ct stops the run.
     public Task<MigrationReport<string>> MigrateAllAsync(CancellationToken ct) =>
-        orchestrator.MigrateAllAsync(ct);
+        migrations.MigrateAllAsync(ct);
 
-    // Migrate a single named tenant. Returns a failed result rather than throwing on migration error.
-    public Task<MigrationResult<string>> MigrateOneAsync(string tenantId, CancellationToken ct) =>
-        orchestrator.MigrateTenantAsync(tenantId, ct);
+    // One tenant, for each context. A failed migration is in the report rather than thrown.
+    public Task<MigrationReport<string>> MigrateOneAsync(string tenantId, CancellationToken ct) =>
+        migrations.MigrateTenantAsync(tenantId, ct);
 }
 ```
+
+To follow a long run, pass an `IProgress<MigrationResult<TKey>>`: its `Report` is called with each database's or
+schema's result as it completes, with every tenant whose data is there, once, and one call at a time:
+
+```csharp
+var migrations = app.Services.GetRequiredService<ITenantMigrationRunner<string>>();
+var report = await migrations.MigrateAllAsync(
+    new Progress<MigrationResult<string>>(result => Console.WriteLine(
+        $"{result.Database}/{result.Schema}: {(result.Succeeded ? "migrated" : "failed")}")),
+    ct);
+```
+
+`Progress<T>` runs the callback on the synchronization context it was created on or, without one (a console
+application, the deployment step, ASP.NET Core), on the thread pool, where callbacks can overlap, run out of order and
+come after `MigrateAllAsync` returns: keep it thread-safe, as `Console.WriteLine` is. An `IProgress<T>` of your own is
+called on the thread that completed the result, one call at a time. An exception from `Report` is logged, and the run
+goes on.
+
+**Once per database or schema.** Tenants whose context connects to the same database and schema are migrated once,
+together, and share one result: the shared database in [mixed mode](mixed-mode.md), say, or tenants that
+`GetSchemaName` gives one schema. Tenants share a database and schema when their contexts have the same connection
+string, the same default schema and the same migration history table. A connection interceptor that switches the
+database or schema for each tenant hides that, so do not combine one with `AddMigrations`. To know which tenants share
+one before migrating, a run first creates each tenant's context, then creates it again for the first tenant of each
+database or schema to migrate it.
+
+`MigrateAllAsync` migrates every tenant your store's `GetAllTenantsAsync` returns, and `MigrateTenantAsync`
+throws `TenantNotFoundException` for a tenant the store does not return. So the store must list
+suspended tenants too (see
+[Tenant stores](https://github.com/tenantry-org/tenantry-core/blob/master/docs/tenant-stores.md#suspended-and-inactive-tenants)
+in Tenantry core): a tenant hidden while it is suspended misses every run and fails when it is
+reactivated.
+
+Keep a suspended tenant's database online, so it keeps receiving migrations: suspension decides who may use
+the tenant, not whether its database runs. A tenant whose database cannot be reached is reported as a
+failure on every run, which fails the deployment step below and, with `StartupMigrations.FailOnError`, stops
+startup. If you take a tenant's database offline (archived or dropped), remove the tenant from the store. To bring
+it back, restore the database, add the tenant back as inactive, run `MigrateTenantAsync`, then reactivate it.
+
+`MigrateAsync` in EF Core creates a tenant's database if it does not exist, so a mistyped or stale
+connection string gets a new, empty, fully migrated database rather than an error. Create databases with
+[provisioning](database-per-tenant.md#provisioning-a-new-tenant) and check the connection strings your
+store produces.
 
 ### Run as a deployment step (recommended)
 
 Migrate once per deployment, from one process, before the new version starts serving traffic: a CI/CD
-stage, a Kubernetes `Job` or init container, or a `migrate` command in your application. The
-database-per-tenant samples show the command form:
+stage, a Kubernetes `Job` or init container. Run the application with the argument `migrate-tenants`; it
+migrates every tenant and exits, without starting the host:
 
 ```csharp
-var app = builder.Build();
+await using var app = builder.Build();   // disposing it at exit writes out the last log messages
 
-// dotnet run -- migrate
-if (args.Contains("migrate"))
-{
-    var report = await app.Services.GetRequiredService<MigrationOrchestratorService<string, AppDbContext>>()
-        .MigrateAllAsync();
-    return report.HasFailures ? 1 : 0;   // a non-zero exit code fails the deployment step
-}
+// dotnet run -- migrate-tenants
+if (await app.RunTenantMigrationsIfRequestedAsync(args) is { } exitCode)
+    return exitCode;   // 1 if any database or schema failed, which fails the deployment step
 
 await app.RunAsync();
 return 0;
 ```
 
+Each failure is logged, once, as an error, and the run ends with a summary: a warning if any failed.
+
 ### Run at startup
 
-Passing `runAtStartup: true` registers a hosted service that calls `MigrateAllAsync` during startup,
-before the app begins accepting requests. It lengthens boot time in proportion to the number of
-tenants, runs on **every instance** (see below), and by default only logs failed tenants and starts
-anyway. Add `failStartupOnMigrationError: true` to stop the application from starting instead, so an
-instance never serves tenants whose schema it could not bring up to date:
+`o.OnStartup` applies the context's migrations as the application starts, before it serves requests:
 
 ```csharp
-pro.WithMigrationOrchestration<string, AppDbContext>(
-    cs => new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(cs).Options),
-    runAtStartup: true,
-    failStartupOnMigrationError: true);
+tenant.UsePro(pro => pro.AddMigrations<AppDbContext>(o => o.OnStartup = StartupMigrations.FailOnError));
 ```
 
-Keep `runAtStartup` for single-instance deployments and development.
+| `OnStartup` | At startup |
+|-------------|------------|
+| `None` (the default) | Nothing: run them as a deployment step |
+| `LogFailures` | Migrates every tenant; failures are logged and the application starts |
+| `FailOnError` | Migrates every tenant; any failure stops the application from starting |
+
+It lengthens boot time in proportion to the number of tenants and runs on **every instance** (see below), so keep it
+for single-instance deployments and development.
 
 ### Multiple instances
 
-Tenantry takes **no lock** when it migrates. If several instances run `MigrateAllAsync` at the same time
-(for example `runAtStartup: true` on every replica of a scaled-out app), each one migrates every tenant:
+Tenantry takes **no lock** when it migrates. If several instances migrate at the same time (for example
+`OnStartup` on every replica of a scaled-out app), each one migrates every tenant:
 
 - **EF Core 9 and later** take a database lock while applying migrations on providers that support it,
   so concurrent runs against the same tenant database wait for each other and the second finds nothing
-  pending. In our tests this held on SQL Server, PostgreSQL and MySQL (see
-  [Tested combinations](database-providers.md#tested-combinations)).
+  pending, and reports nothing applied for that tenant. In our tests this held on SQL Server and MySQL,
+  and on PostgreSQL with EF Core 9 (see [Tested combinations](database-providers.md#tested-combinations)).
+- **PostgreSQL with EF Core 10 and later** holds that lock only until each migration commits, so with
+  several migrations pending two runs can take turns: in our tests one applied the first migration, the
+  other applied the rest, and the first then failed with "already exists". Each run reports only the
+  migrations it applied, the end state was correct, and a rerun applied nothing.
 - **EF Core 8**, which Tenantry.Pro's `net8.0` assets use, takes no lock. In our tests two runners
   raced on every provider: one applied the migration and the other reported that tenant as failed
   ("already exists"). The end state was correct and a rerun applied nothing, but on MySQL, whose DDL is
   not transactional, a race inside a larger migration can leave it half applied.
 
 Either way, every instance repeats the whole sweep, so startup time grows with the number of instances
-and tenants. With more than one instance, run migrations as a deployment step (above) and leave
-`runAtStartup` off.
+and tenants. With more than one instance, run migrations as a deployment step (above) and leave `OnStartup` at
+`None`.
+
+## Schema per tenant
+
+With [schema per tenant](schema-per-tenant.md), each tenant's schema gets your migrations, with a migration history
+table of its own in that schema. Nothing in the migrations names the schema:
+
+- **Generate migrations as usual.** `dotnet ef migrations add` builds the model without a tenant, so without a schema,
+  and the migrations and snapshot it writes name none. Keep `HasDefaultSchema` and explicit schemas out of the model's
+  tenant tables: a schema a migration names is kept, so that table would not move to each tenant's schema.
+- **At run time**, every table, index, key and sequence a migration names without a schema gets the tenant's, and so
+  does the snapshot that EF Core 9 and later compare with the model before migrating. The history table keeps its
+  name (`MigrationsHistoryTable`, if you set one) and moves to the tenant's schema.
+- **SQL you add with `migrationBuilder.Sql(...)` is applied as written**: names in it are not put in the tenant's
+  schema, so unqualified ones resolve to the database's default. Keep tenant migrations to EF Core's operations.
+- A tenant's schema that does not exist yet is created with its history table, but create schemas with
+  [schema provisioning](schema-per-tenant.md#provisioning-a-new-tenant), which runs before the `Migrations` step.
+- Tested on SQL Server and PostgreSQL; MySQL has no schemas apart from databases.
 
 ## Failure model
 
-- **Sequential, not parallel.** Tenants are migrated one at a time to avoid overwhelming the database
-  server under CI or production load.
-- **Per-tenant isolation.** A failure migrating one tenant never aborts the others. `MigrateAllAsync`
-  does not throw on a migration error — every per-tenant outcome is captured in the report.
+- **One at a time, by default.** Databases and schemas are migrated one at a time, so a large tenant count does not
+  overwhelm the server. See [Several at once](#several-at-once).
+- **Each database on its own.** A failure migrating one never stops the others. `MigrateAllAsync` does not throw on a
+  migration error: every outcome is in the report, and each failure is logged once, as an error. A tenant whose
+  context cannot be created (its connection string cannot be read, say) is a failure of its own.
 - **Cancellation stops the run.** When the cancellation token is cancelled, `MigrateAllAsync` and
-  `MigrateTenantAsync` throw `OperationCanceledException`: the tenant in progress is abandoned, the
-  remaining tenants are not attempted (they are not reported as failures), and tenants already
-  migrated stay migrated. A timeout inside one tenant's migration that does not come from your token is
-  that tenant's failure and the run continues.
+  `MigrateTenantAsync` throw `OperationCanceledException`: the databases in progress are abandoned, the rest are not
+  attempted (they are not reported as failures), and those already migrated stay migrated. The report is not
+  returned, so after a cancelled run (a CI timeout, say) read the logs, where each outcome is written as it finishes,
+  or check every tenant with `GetStatusAsync`. A timeout inside one migration that does not come from your token is
+  that database's failure, and the run continues.
 - **Licence check.** The licence is checked once, up front: a missing or invalid key throws
   `LicenseRequiredException` before any tenant is touched.
 
-`MigrationReport<TKey>` aggregates the run:
+`MigrationReport<TKey>` aggregates the run, in the order of the contexts and of the tenants in the store, however
+many were migrated at once:
 
 | Member | Meaning |
 |--------|---------|
-| `Results` | One `MigrationResult<TKey>` per tenant |
+| `Results` | One `MigrationResult<TKey>` per context and database or schema |
 | `Total` / `Succeeded` / `Failed` | Counts across the run |
-| `HasFailures` | True if any tenant failed |
+| `HasFailures` | True if any failed |
 
-Each `MigrationResult<TKey>` carries `TenantId`, `Succeeded`, `AppliedMigrations` (names applied this
-run), `Duration`, and `Error` (the exception on failure).
+Each `MigrationResult<TKey>` carries `ContextType`, `TenantIds` (the tenants whose data is there), `Database` and
+`Schema`, `Succeeded`, `AppliedMigrations`, `Duration`, and `Error` (the exception on failure). `AppliedMigrations`
+lists the migrations this run applied, in order: those whose row in the migration history this run wrote and
+committed. So it never lists a migration another instance applied, whether this run waited for it, failed on it, or
+skipped it on a retry (see [Multiple instances](#multiple-instances)). When a run fails, it lists the migrations
+committed before the failure, which depends on the EF Core version (see
+[Failed migrations](tenant-lifecycle.md#when-provisioning-fails)); the failing migration is never listed. On MySQL
+with EF Core 9 a failed run lists none, although MySQL keeps the earlier migrations applied. After a failure, check
+the tenant with `GetTenantStatusAsync` (below).
+
+## Several at once
+
+With many tenant databases, a run migrating one at a time can take longer than your deployment allows. Set
+`o.MaxConcurrency` to migrate several at once:
+
+```csharp
+tenant.UsePro(pro => pro.AddMigrations<AppDbContext>(o => o.MaxConcurrency = 8));
+```
+
+- Each tenant's context is still created in the tenant's own scope, but now several at once: your connection-string
+  provider and `CreateContext` must allow that (Tenantry's are).
+- Tenants are still worked on one at a time until one tenant's context has been created: some EF Core providers set
+  up shared state the first time a context is used, without a lock (Oracle's `MySql.EntityFrameworkCore` builds its
+  type mappings so), and contexts created at once in a new application could corrupt it. Two runs at once in one new
+  process (startup migrations and a migration health check, say) can still meet there.
+- It helps most with a database per tenant, spread over servers. Schemas in one database may take turns: EF Core 9
+  and later lock the database while applying migrations, on providers that support it.
+- `MaxConcurrency` is set for each context, and also bounds `GetStatusAsync`. Contexts are migrated one after
+  another. A value below 1 stops the application from starting.
 
 ## Checking status without migrating
 
-`MigrationStatusTracker<TKey, TContext>` is read-only and **requires no licence**, so it is safe for
-dashboards and monitoring even when a licence has lapsed:
+`GetStatusAsync` and `GetTenantStatusAsync` are read-only and **never check the licence key** (they change nothing),
+so they never throw `LicenseRequiredException`:
 
 ```csharp
-public sealed class MigrationStatusService(MigrationStatusTracker<string, AppDbContext> tracker)
+public sealed class MigrationStatusService(ITenantMigrationRunner<string> migrations)
 {
     public Task<IReadOnlyList<MigrationStatusEntry<string>>> AllAsync(CancellationToken ct) =>
-        tracker.GetStatusAsync(ct);
+        migrations.GetStatusAsync(ct);
 
-    public Task<MigrationStatusEntry<string>> OneAsync(string tenantId, CancellationToken ct) =>
-        tracker.GetTenantStatusAsync(tenantId, ct);
+    public Task<IReadOnlyList<MigrationStatusEntry<string>>> OneAsync(string tenantId, CancellationToken ct) =>
+        migrations.GetTenantStatusAsync(tenantId, ct);
 }
 ```
 
-Each `MigrationStatusEntry<TKey>` exposes `AppliedMigrations`, `PendingMigrations`, and `IsUpToDate`.
-The same information powers the [migration health check](health-checks.md).
+Each `MigrationStatusEntry<TKey>` names its context, tenants, database and schema, and exposes `AppliedMigrations`,
+`PendingMigrations`, `IsUpToDate`, and `Error`. A database whose status cannot be read, for example because it is
+unreachable, gets an entry with `Error` set (and `IsUpToDate` false) instead of failing the whole call, so the others
+are still read. Cancelling the token still throws. The [migration health check](health-checks.md#migration-check)
+reads the same information.
 
 ## Limitations
 
-- Targets the **database-per-tenant** path (one connection string per tenant).
-- Tenantry.Pro executes your existing EF Core migrations; it does not generate them.
+- Tenantry.Pro applies your existing EF Core migrations; it does not generate them.
 - Migrations use reflection and runtime code generation, so these APIs are annotated
   `[RequiresDynamicCode]`/`[RequiresUnreferencedCode]` and are not Native-AOT compatible.
 
 ## See also
 
-- [Tenant lifecycle](tenant-lifecycle.md) — provision, migrate, and seed a new tenant in one call.
-- [Health checks](health-checks.md) — surface pending migrations as a health probe.
+- [Tenant lifecycle](tenant-lifecycle.md): provision, migrate, and seed a new tenant in one call.
+- [Health checks](health-checks.md): report pending migrations to your monitoring.
+- [Mixed mode](mixed-mode.md): a database, a schema or the shared database, per tenant.
