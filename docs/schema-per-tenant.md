@@ -8,9 +8,10 @@ use a database per tenant there.
 
 ## What Tenantry.Pro provides
 
-- `pro.UseSchemaPerTenant(o => o.GetSchemaName = …)` — every context that uses `UseTenantry()` gets the
+- `pro.UseSchemaPerTenant(o => o.GetSchemaName = …)` — the context that uses `UseTenantry()` gets the
   current tenant's schema as its default schema, with a **separate compiled model per schema**, so the
-  right schema is in each tenant's queries. Your `DbContext` names no schema.
+  right schema is in each tenant's queries. Your `DbContext` names no schema. With more than one such context, you
+  list those that get it ([Which contexts get the schema](#which-contexts-get-the-schema)).
 - `pro.AddSchemaProvisioning<TContext>()` — creates a tenant's schema when you provision it (see
   [Tenant lifecycle](tenant-lifecycle.md)).
 - `pro.AddMigrations<TContext>()` — applies your EF Core migrations, generated without a schema, to each tenant's
@@ -66,10 +67,50 @@ table that does not name a schema of its own. Tenants whose `GetSchemaName` give
 schema and a compiled model. Without a current tenant, the model has no default schema: that is the model
 design-time tools such as `dotnet ef migrations add` see, so migrations are generated without a schema.
 
+**It fails closed.** A context used without a current tenant would use the database's default schema, so its
+first query, command or save throws `TenantNotResolvedException`. EF Core fixes the schema when it first builds a
+context's model, so a context keeps the schema of the tenant that was current then. Used under another tenant, it
+throws `TenantIsolationViolationException` (`Kind` is `TenantSchemaMismatch`). Create a context for each tenant, in
+its scope, as requests and `ITenantScopeFactory` do.
+
 `GetSchemaName` is called often, so keep it fast, and it must give a tenant the same name every time. A
 name that is empty, has control characters or is longer than the database allows (128 characters on SQL
 Server, 63 bytes on PostgreSQL, which would otherwise cut it short without an error) fails the tenant's
 queries with `InvalidOperationException`.
+
+### Which contexts get the schema
+
+With one context type that uses `UseTenantry()`, as above, that context gets the tenant's schema, and there is nothing
+to list. With more than one (a second over reference data with `ITenantEntity` rows, say, which stays in the shared
+schema), list those that get it:
+
+```csharp
+pro.UseSchemaPerTenant(o =>
+{
+    o.GetSchemaName = t => $"tenant_{t.TenantId}";
+    o.Contexts.Add(typeof(AppDbContext));   // and its subclasses; other contexts keep Tenantry's filters only
+});
+```
+
+Leave the list empty with more than one, and schema per tenant does not guess which of them get the schema: it fails
+closed, with an `InvalidOperationException` that names the context types and asks you to list them in
+`SchemaPerTenantOptions.Contexts`.
+
+- **When the host starts**, for the contexts you register with `AddDbContext`, `AddDbContextFactory`, their pooled
+  forms or Tenantry Core's `AddDbContextPerTenantDatabase`. The host builds each one's options, without a tenant,
+  before any hosted service starts, so before migrations at startup and before any request.
+- **Before `migrate-tenants` or `ITenantMigrationRunner` migrates a tenant**, the same way, since a deployment step
+  does not start the host.
+- **Otherwise, when the second context's options are built**: a context you build by hand, one whose options cannot
+  be built without a tenant, or one used by a tool that builds your host without starting it, such as `dotnet ef`.
+  From then on every schema-per-tenant context of the application throws too.
+
+A design-time factory (`IDesignTimeDbContextFactory`) that builds the options without your application's services,
+as the samples' does, gets no schema per tenant and is not counted.
+
+A context type that derives from another counts as that one, as it does in the list: a test's
+`TestAppDbContext : AppDbContext` beside `AppDbContext` needs no list. Two contexts that derive from a common base
+class, and not from one another, are two.
 
 ### How many schemas stay compiled
 
@@ -130,6 +171,10 @@ pro.AddSchemaProvisioning<AppDbContext>(o => o.CreateContext = sp =>
 On a provider other than SQL Server or PostgreSQL the step fails with `NotSupportedException`.
 `AddSchemaProvisioning` without `UseSchemaPerTenant` stops the application from starting.
 
+To drop the tenant's schema, with its tables, when it leaves, add `pro.AddSchemaDeprovisioning<TContext>()` and call
+`ITenantDeprovisioner<TKey>`: it refuses a schema another tenant has. See
+[Offboarding a tenant](tenant-lifecycle.md#offboarding-a-tenant).
+
 ## Tables and migrations
 
 `pro.AddMigrations<TContext>()` applies your migrations to each tenant's schema: as the `Migrations` provisioning
@@ -152,7 +197,7 @@ they match.
 - Keep the schema out of the model: no `HasDefaultSchema`, and no schema in `ToTable` for the tenant tables. A schema
   a migration names is kept, so that table would stay where it names.
 - SQL you add with `migrationBuilder.Sql(...)` is applied as written: names in it are not put in the tenant's schema.
-- `dotnet ef database update` has no tenant, so it migrates the database's default schema. Migrate tenants with the
+- `dotnet ef database update` has no tenant, so it throws `TenantNotResolvedException`. Migrate tenants with the
   runner, as a deployment step (`app.RunTenantMigrationsIfRequestedAsync(args)`, see
   [Tenant migrations](migration-orchestration.md#run-as-a-deployment-step-recommended)).
 
@@ -160,12 +205,12 @@ The [SchemaPerTenant samples](../samples/Tenantry.Pro.Samples.SchemaPerTenantPos
 
 ## Limitations
 
-- **No MySQL/MariaDB strategy.** MySQL has no schemas separate from databases (a schema *is* a
+- **No MySQL strategy.** MySQL has no schemas separate from databases (a schema *is* a
   database), so there is no schema provisioning for it; use a database per tenant there.
 - EF Core holds one compiled model per schema in memory, up to `MaxCachedSchemas` per context type
   ([above](#how-many-schemas-stay-compiled)).
 - Schema provisioning is explicit; Tenantry.Pro does not create schemas on first request.
-- Every context that uses `UseTenantry()` gets the tenant's schema, and none of them can be pooled.
+- The contexts that get the tenant's schema cannot be pooled.
 
 ## See also
 

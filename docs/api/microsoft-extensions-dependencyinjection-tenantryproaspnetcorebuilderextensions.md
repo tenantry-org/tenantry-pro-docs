@@ -12,7 +12,7 @@ public static class TenantryProAspNetCoreBuilderExtensions
 
 ### `AddTenantMetrics<TKey>(IProBuilder<TKey>, Action<TenantMetricsOptions<TKey>>?)`
 
-Tags ASP.NET Core's request metrics (`http.server.request.duration`) with the request's tenant, as `tenant.id`. Add the middleware with `app.UseTenantryMetrics()`, after `app.UseTenantry()`.
+Tags ASP.NET Core's request metrics (`http.server.request.duration`) with the request's tenant, as `tenant.id`, when `app.UseTenantry()` resolves it. An `OnResolved` handler of the application's own still runs, after the tag is added.
 
 ```csharp
 public static IProBuilder<TKey> AddTenantMetrics<TKey>(this IProBuilder<TKey> builder, Action<TenantMetricsOptions<TKey>>? configure = null) where TKey : IEquatable<TKey>, IParsable<TKey>

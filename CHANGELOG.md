@@ -7,6 +7,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-03
+
+### Upgrading from 0.5
+
+- Pro 0.6 runs on Tenantry Core 0.6.
+- `TenantPropagation.HeaderName` moved to Tenantry Core: it is `Tenantry.TenantPropagation`, so code that named
+  `Tenantry.Pro.TenantPropagation` names `Tenantry.TenantPropagation`, or adds `using Tenantry;`.
+- A migration run (`migrate-tenants`, `OnStartup`, `ITenantMigrationRunner`) no longer creates a tenant's database that
+  does not exist, nor a tenant schema that does not exist: it reports that tenant as failed. Provision
+  tenants first, as provisioning's `Migrations` step still creates; for development, set
+  `o.CreateMissingDatabases = builder.Environment.IsDevelopment()` in `AddMigrations`.
+- `migrate-tenants` returns 3, logged, rather than throwing, when it cannot start (no valid licence, a tenant store that
+  cannot be read), and 2 when it stops early.
+- Schema per tenant fails closed: a context's first command or save throws `TenantNotResolvedException` without a
+  current tenant, where it used the database's default schema, and `TenantIsolationViolationException`
+  (`TenantSchemaMismatch`) under a tenant other than the one whose schema its model has. `dotnet ef database update`
+  on such a context now throws: migrate tenants with `migrate-tenants`.
+- Schema per tenant applies to the one context type that uses `UseTenantry()`. An application with more than one,
+  each of which 0.5 put in the tenant's schema, lists those that get it in `SchemaPerTenantOptions.Contexts`
+  (`o.Contexts.Add(typeof(AppDbContext))`). Until it does, the host does not start and `migrate-tenants` returns 3,
+  with an `InvalidOperationException` that names the context types; a context built outside the host fails when its
+  options are built. A context type that derives from another, such as a test's, counts as that one.
+- In mixed mode, a `Shared` tenant's context throws `TenantIsolationViolationException` (`ModelConfiguration`) when
+  an entity in its model neither implements `ITenantEntity<TKey>` nor is marked with `[SharedAcrossTenants]` or
+  `IsSharedAcrossTenants()`. Such an entity's rows were read and written across tenants.
+- In mixed mode, `GetIsolation` returning `TenantIsolation.Schema` without `UseSchemaPerTenant` throws
+  `InvalidOperationException` wherever the tenant's isolation is read (provisioning, offboarding, its contexts). The
+  tenant used to get the shared schema, and provisioning reported success.
+- `app.UseTenantryMetrics()` is gone: remove the call. `pro.AddTenantMetrics()` adds the `tenant.id` tag when
+  `app.UseTenantry()` resolves the tenant, through Tenantry Core's `OnResolved`, after which an `OnResolved` handler
+  of your own still runs. `Tenantry.Pro.AspNetCore` now depends on `Tenantry.AspNetCore`.
+- Hangfire's `jobs.ForTenant(id)` and MassTransit's `context.SetTenant(id)` are `WithTenant`, as in the Quartz.NET
+  and Rebus integrations. Each `WithTenant` also takes the tenant itself, which keeps an id of the wrong type from
+  compiling.
+- `ITenantMigrationRunner<TKey>` has two members, `MigrateAsync(options?, progress?, ct)` and
+  `GetStatusAsync(options?, ct)`. `MigrateAllAsync`, `MigrateTenantAsync` and `GetTenantStatusAsync` are extension
+  methods in `TenantMigrationRunnerExtensions`. Pass a token alone to `GetStatusAsync` by name
+  (`GetStatusAsync(cancellationToken: ct)`).
+- `TenantProvisioningStepResult` and `TenantProvisioningStepStatus` are `TenantLifecycleStepResult` and
+  `TenantLifecycleStepStatus`, as offboarding's results use them too: rename them where your code names them.
+
+### Added
+
+- Offboarding: `ITenantDeprovisioner<TKey>.DeprovisionAsync(tenant)` runs the application's steps
+  (`pro.AddDeprovisioningStep<T>()`), then drops the tenant's database or schema
+  (`pro.AddDatabaseDeprovisioning<TContext>()` or `pro.AddSchemaDeprovisioning<TContext>()`) or deletes its rows from a shared database
+  (`pro.AddSharedDataDeletion<TContext>()`), then clears what Tenantry caches for it. A failed step stops it, and a
+  database or schema another tenant's context uses is never dropped. It refuses a tenant the store still has and that
+  is active, read past this instance's tenant cache. Shared rows are deleted before any drop, and on a retry the
+  application's steps see `TenantDeprovisioningContext.DataDropped` when a drop finds the data already gone. Log
+  events 3105 to 3108 and 4005 to 4007.
+- `ITenantMigrationRunner.MigrateAsync(MigrationRunOptions<TKey>)`: migrate the tenants it names (`Tenants`), leave
+  some out (`ExcludedTenants`), and stop starting databases after a number of failures (`MaxFailures`). Those it did not
+  start are in the report as not attempted (`MigrationResult.Attempted`, `MigrationReport.NotAttempted` and `Stopped`).
+- `migrate-tenants --tenant <id> --exclude <id> --max-failures <n>`, with documented exit codes: 0 migrated, 1 a
+  failure, 2 stopped early, 3 not started. A first SIGTERM or Ctrl+C lets the databases in progress finish and starts no
+  other. An id the store does not have, excluded or selected, and a near miss of an option (`--tenants`) do not start
+  the run.
+- `TenantMigrationOptions.CreateMissingDatabases`, for development.
+- `TenantBackgroundService` opens a log scope with `TenantId` for each tenant's work, as jobs and messages do.
+- Background work honours Tenantry Core's `ValidateTenantActivity`: `TenantBackgroundService`,
+  `PeriodicTenantBackgroundService`, Hangfire's `AddOrUpdateForEachTenant` and Quartz.NET's `ForEachTenant` skip a
+  tenant it refuses (log event 3203), and a job or message for one is handled as unresolved (`OnUnresolvedTenant`,
+  which by default throws `TenantInactiveException`; log events 3407 and 3408).
+- `SchemaPerTenantOptions.Contexts`: list the context types that get the tenant's schema, and their subclasses, so
+  another context that uses `UseTenantry()` can stay in the shared schema. With only one such context there is nothing
+  to list; with more than one and none listed, schema per tenant fails closed rather than guess (see Upgrading).
+- `ITenantPropagator` and `PropagatedTenant` are public, and `UsePro` registers the propagator, so the tenant can be
+  carried over a bus or job library Tenantry.Pro has no integration for. `PropagatedTenant` is one of three outcomes:
+  `Resolved(tenant)`, `WithoutTenant` or `Skipped`. `Use` runs work carried without a tenant as no tenant, even inside
+  another tenant's flow, and refuses skipped work.
+- A public API for propagation adapters, which the Hangfire, MassTransit, Quartz.NET and Rebus integrations now use:
+  an `ITenantPropagationAdapter`, registered with `TenantPropagationAdapter.Add`, gets `TenantPropagationOptions` of its
+  own, the propagator and the integrations' startup check, which stops the application starting when its host side
+  never ran. Its host side marks `TenantPropagationIntegration<TAdapter>` wired and carries the tenant with its
+  `Propagator` and `Options`; `TenantPropagationAdapter.FormatTenantId` formats a tenant id for a `WithTenant` method.
+  The background jobs guide has an example. These types and the propagator are marked
+  `[EditorBrowsable(EditorBrowsableState.Advanced)]`, and the API reference lists them apart, as extension points.
+- Log events 4114 to 4117: a run that stopped early, a stop signal, a deployment step that could not start, and EF
+  Core's diagnostic events being unobservable for a context.
+
+### Changed
+
+- `Tenantry.Pro.Hangfire`, `Tenantry.Pro.MassTransit`, `Tenantry.Pro.Quartz` and `Tenantry.Pro.Rebus` use only
+  `Tenantry.Pro`'s public API, so each depends on `Tenantry.Pro` from its own release up to the next minor, rather
+  than on exactly its own release. `Tenantry.Pro.EfCore` still depends on exactly its own release.
+- Invalidating a tenant with Tenantry Core's `ITenantInvalidator` clears its cached connection string too
+  (`CacheConnectionStrings`).
+- A run for some tenants, `MigrateTenantAsync` included, names every tenant of a database or schema it migrated in the
+  result: migrating one tenant of a shared database migrates it for all of them.
+- Tenants whose connection strings reach the same server, port and database share their migrations and their migration
+  health, though the strings differ in a setting such as a timeout: such a database is migrated once, and excluding
+  one of its tenants leaves it out. When the model sets no schema, tenants whose login, or PostgreSQL search path,
+  differs are kept apart, since their tables are in different schemas.
+- Every public Tenantry.Pro.EfCore method that configures or creates an EF Core context or model carries
+  `[RequiresUnreferencedCode]` and `[RequiresDynamicCode]`, as Tenantry.EfCore's do: `UseSchemaPerTenant`,
+  `AddDatabaseProvisioning`, `AddSchemaProvisioning`, `AddSharedDataDeletion` and `AddTenantDatabaseCheck` now warn
+  under the trim and AOT analyzers too.
+- `CacheConnectionStrings` wraps the connection-string provider through Tenantry Core's `DecorateConnectionStrings`,
+  and passes on its `CanGetSynchronously`. The tenant key type comes from Core's `ITenantKeyType`.
+- The tenant ids, telemetry names and propagation header come from Tenantry Core's `TenantIds`, `TenantTelemetry` and
+  `TenantPropagation`, which Tenantry.Http uses too.
+- The migration guide and the database-per-tenant samples no longer list an init container as a way to migrate once
+  per deployment: it runs in every replica. The migration guide also says to run one migration step at a time, and to
+  invalidate Tenantry's caches when you restore a tenant. The licensing guide says that when a subscription ends
+  restores from the feed fail for every version, so keep copies of the packages you build with, as the installation
+  guide says. The readme says Tenantry.Pro is in beta until 1.0.
+
+### Fixed
+
+- An audit entry for an insert records in `NewValues` what the database generated (an identity key, a default, a
+  computed column), not EF Core's temporary value from before the insert.
+- The audit entries of a transaction that rolls back, or whose commit or rollback fails, are dropped at once. Npgsql
+  reuses its transaction objects, so a later transaction handed to a context with `UseTransaction` could write them.
+
 ## [0.5.0] - 2026-10-03
 
 ### Upgrading from 0.4
@@ -212,6 +327,9 @@ that uses Pro's types needs `using Tenantry.Pro;` (and `using Tenantry.Pro.EfCor
 
 ### Changed
 
+- `Tenantry.Pro.Hangfire`, `Tenantry.Pro.MassTransit`, `Tenantry.Pro.Quartz` and `Tenantry.Pro.Rebus` use only
+  `Tenantry.Pro`'s public API, so each depends on `Tenantry.Pro` from its own release up to the next minor, rather
+  than on exactly its own release. `Tenantry.Pro.EfCore` still depends on exactly its own release.
 - **Breaking:** Tenantry.Pro follows Tenantry Core 0.5's API (see Core's changelog, "Upgrading from 0.4"):
   `AddTenantry` is the one entry point for every host (`AddTenantryCore` is gone), Core's types are in the
   `Tenantry` namespace and its registration methods need no `using`, `ITenantContextSetter<TKey>.Use` makes a
@@ -498,6 +616,9 @@ previous development builds, so anyone who used one knows what to update; there 
 
 ### Changed
 
+- `Tenantry.Pro.Hangfire`, `Tenantry.Pro.MassTransit`, `Tenantry.Pro.Quartz` and `Tenantry.Pro.Rebus` use only
+  `Tenantry.Pro`'s public API, so each depends on `Tenantry.Pro` from its own release up to the next minor, rather
+  than on exactly its own release. `Tenantry.Pro.EfCore` still depends on exactly its own release.
 - MySQL on .NET 10 is supported with Oracle's `MySql.EntityFrameworkCore` (Pomelo has no EF Core 10
   release); on EF Core 8 and 9, use Pomelo. The MySQL sample moved from .NET 9 and Pomelo to
   .NET 10 and Oracle's provider, and the providers guide says which provider to use for each EF Core

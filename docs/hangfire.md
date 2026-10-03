@@ -46,15 +46,16 @@ SQL Server storage prepares its schema) rather than at the first enqueue.
 ## Behaviour
 
 The tenant's id is stored in the job's parameters, under `TenantPropagation.HeaderName`
-(`tenantry-tenant-id`).
+(`tenantry-tenant-id`). The job runs as whatever tenant its storage names, so keep job storage writable only by your
+application.
 
 | Scenario | Result |
 |----------|--------|
 | Job enqueued while a tenant is current | The job runs as that tenant |
 | Job enqueued with no tenant current | `OnMissingTenant` applies (default `Warn`: the job runs without a tenant, and a warning is logged) |
 | The job's tenant is not in the store, or its id is not a valid id | `OnUnresolvedTenant` applies (default `Reject`: the job fails, and Hangfire's retries apply) |
-| Tenant is in the store but suspended by your app | The job runs as that tenant: the filter does not check status, so [your job must check](background-jobs.md#suspended-tenants) |
-| Job enqueued through `jobs.ForTenant(id)` | The job runs as that tenant, whichever tenant is current ([Enqueueing a job for a tenant](#enqueueing-a-job-for-a-tenant)) |
+| Tenant that `ValidateTenantActivity` refuses | As a tenant the store does not have: `OnUnresolvedTenant` applies ([Suspended tenants](background-jobs.md#suspended-tenants)) |
+| Job enqueued through `jobs.WithTenant(id)` | The job runs as that tenant, whichever tenant is current ([Enqueueing a job for a tenant](#enqueueing-a-job-for-a-tenant)) |
 | Recurring job (`RecurringJob.AddOrUpdate`) | Hangfire's scheduler creates each run outside any request, so it carries no tenant and `OnMissingTenant` applies to every run. For work per tenant, use `AddOrUpdateForEachTenant` ([Recurring jobs](#recurring-jobs)) |
 
 While a job runs as its tenant, its logs carry a `TenantId` scope, and the job's trace span, if a tracing filter
@@ -64,7 +65,7 @@ While a job runs as its tenant, its logs carry a `TenantId` scope, and the job's
 ## Enqueueing a job for a tenant
 
 To enqueue a job on a tenant's behalf from code that runs without one (an administrator's request, a system task),
-or for another tenant than the current one, enqueue it through `ForTenant`:
+or for another tenant than the current one, enqueue it through `WithTenant`:
 
 ```csharp
 using Hangfire;
@@ -72,14 +73,14 @@ using Hangfire;
 public sealed class ReportRequests(IBackgroundJobClient jobs)
 {
     public string Enqueue(string tenantId) =>
-        jobs.ForTenant(tenantId).Enqueue<ReportJob>(job => job.Execute());   // runs as tenantId
+        jobs.WithTenant(tenantId).Enqueue<ReportJob>(job => job.Execute());   // runs as tenantId
 }
 ```
 
-`ForTenant` returns a client like the one it wraps, so `Schedule` and `ContinueJobWith` work through it too. Each
+`WithTenant` returns a client like the one it wraps, so `Schedule` and `ContinueJobWith` work through it too. Each
 job it creates carries the tenant in its parameters, and Tenantry's filter leaves it there rather than replace it
 with the current tenant. The tenant is looked up when the job runs, so `OnUnresolvedTenant` applies to an id the
-store does not have. `ForTenant` needs a client that takes job parameters (`IBackgroundJobClientV2`), as
+store does not have. `WithTenant` needs a client that takes job parameters (`IBackgroundJobClientV2`), as
 Hangfire's own does, and refuses the id Tenantry reserves for "no tenant" (`Guid.Empty`, `0`, an empty string).
 
 ## Jobs without a tenant, or with one that cannot be found
@@ -152,8 +153,8 @@ public sealed class ReportSchedule(IRecurringJobManager recurringJobs)
   enqueueing, Hangfire runs it again, and it enqueues every tenant's job again, so make the job safe to run twice.
 - Each tenant's job is a job of its own, retried and shown on its own. They go to the default queue, or to the one
   a `[Queue]` attribute on the method names.
-- It enqueues a job for every tenant the store returns, so a job must check whether your application has
-  [suspended its tenant](background-jobs.md#suspended-tenants).
+- It enqueues a job for every tenant the store returns that `ValidateTenantActivity` allows
+  ([Suspended tenants](background-jobs.md#suspended-tenants)).
 - The server that runs it needs the integration: `pro.AddHangfirePropagation()`, and `UseTenantry(sp)` on Hangfire's
   configuration. A server without them fails the recurring job with an error that says so.
 
@@ -161,5 +162,5 @@ public sealed class ReportSchedule(IRecurringJobManager recurringJobs)
 
 - Hangfire's server filters are synchronous, so the tenant lookup blocks the worker thread. Workers are
   background threads, not request threads.
-- Jobs enqueued with no tenant current, and not through `ForTenant`, carry none. Inject `ITenantContext<TKey>` and
+- Jobs enqueued with no tenant current, and not through `WithTenant`, carry none. Inject `ITenantContext<TKey>` and
   check `HasTenant` if a job must handle both cases.

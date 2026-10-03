@@ -56,9 +56,37 @@ is created, not on something that changes, such as its plan.
 
 | Value | Where the tenant's data lives |
 |-------|-------------------------------|
-| `Shared` | The shared database and schema, kept apart from other tenants' rows by Tenantry's query filters. |
-| `Schema` | Its own schema of the shared database ([Schema per tenant](schema-per-tenant.md)). |
+| `Shared` | The shared database and schema, kept apart from other tenants' rows only by Tenantry's query filters ([Shared tenants](#shared-tenants)). |
+| `Schema` | Its own schema of the shared database ([Schema per tenant](schema-per-tenant.md)). Needs `UseSchemaPerTenant`: without it, reading such a tenant's isolation throws `InvalidOperationException`. |
 | `Database` | Its own database ([Database per tenant](database-per-tenant.md)). |
+
+## Shared tenants
+
+Tenantry's query filters apply only to entities that implement `ITenantEntity<TKey>`. So every entity of a context
+a `Shared` tenant uses must implement it, or be marked as shared by every tenant, with `[SharedAcrossTenants]` or
+`modelBuilder.Entity<Country>().IsSharedAcrossTenants()` (Tenantry Core):
+
+```csharp
+using Tenantry.EfCore;
+
+public sealed class Order : TenantEntity<string>   // a tenant's own rows, filtered by TenantId
+{
+    public int Id { get; set; }
+}
+
+[SharedAcrossTenants]                              // the same rows for every tenant
+public sealed class Country
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+}
+```
+
+Any other entity would be read and written across tenants, so a `Shared` tenant's context with one throws
+`TenantIsolationViolationException` (`Kind` is `ModelConfiguration`) on its first query or save, naming the entities.
+`Schema` and `Database` tenants have tables of their own and need neither. Tenantry.Pro.EfCore makes the check, once
+any of its registration methods is called (`UseSchemaPerTenant`, `AddMigrations` and the others): the migration of
+the shared database for `Shared` tenants is refused too.
 
 ## What honours it
 
@@ -74,6 +102,10 @@ is created, not on something that changes, such as its plan.
   both, in the tenant's database or schema. The steps that do not apply are reported as `Skipped`; a `Shared`
   tenant's database is migrated with the others (below). Your own steps see the tenant's isolation in
   `context.Isolation`, and decide in `AppliesTo`.
+- **Offboarding** ([Tenant lifecycle](tenant-lifecycle.md#offboarding-a-tenant)) removes only the tenant's own:
+  `DropDatabase` applies only to `Database` tenants, `DropSchema` only to `Schema` tenants, and `DeleteSharedData` to
+  `Shared` tenants, to `Schema` tenants' rows in a context schema per tenant leaves in the shared schema, and to
+  `Database` tenants' rows in a context whose database `AddDatabaseDeprovisioning` does not drop.
 - **Migrations** ([Tenant migrations](migration-orchestration.md)) and the migration
   [health check](health-checks.md) work per distinct database or schema: each `Database` tenant's database, each
   `Schema` tenant's schema, and the shared database's default schema once for all the `Shared` tenants. The

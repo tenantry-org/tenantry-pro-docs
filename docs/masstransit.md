@@ -49,14 +49,16 @@ start if any bus does not, and the error names the buses.
 
 ## Behaviour
 
-The tenant's id is carried in the `TenantPropagation.HeaderName` header (`tenantry-tenant-id`).
+The tenant's id is carried in the `TenantPropagation.HeaderName` header (`tenantry-tenant-id`). The consumer trusts
+the header as it is: only let producers you control publish to these endpoints, or check in the consumer that the
+tenant may send the message.
 
 | Scenario | Publish / Send | Consume |
 |----------|---------------|---------|
 | A tenant is current | Header added | The consumer runs as that tenant |
 | No tenant is current | No header | `OnMissingTenant` applies (default `Warn`: the consumer runs without a tenant, and a warning is logged) |
 | The header names a tenant not in the store, or is not a valid id | — | `OnUnresolvedTenant` applies (default `Reject`: the message faults) |
-| Tenant is in the store but suspended by your app | Header added | The consumer runs as that tenant: the filter does not check status, so [your consumer must check](background-jobs.md#suspended-tenants) |
+| Tenant that `ValidateTenantActivity` refuses | Header added | As a tenant the store does not have: `OnUnresolvedTenant` applies ([Suspended tenants](background-jobs.md#suspended-tenants)) |
 
 A message a consumer publishes or sends carries the consumed message's tenant even when it is sent after the
 consumer returns, as MassTransit's in-memory outbox (`UseInMemoryOutbox`) sends it: MassTransit copies the consumed
@@ -77,13 +79,13 @@ using MassTransit;
 public sealed class OrderReminders(IPublishEndpoint publishEndpoint)
 {
     public Task RemindAsync(string tenantId, Guid orderId) =>
-        publishEndpoint.Publish(new OrderPlaced(orderId), context => context.SetTenant(tenantId));
+        publishEndpoint.Publish(new OrderPlaced(orderId), context => context.WithTenant(tenantId));
 }
 ```
 
 The message is consumed as that tenant whichever tenant is current, also from a consumer, and also through the
 in-memory outbox: MassTransit runs the callback after the bus's filters, Tenantry's among them. The tenant is looked up when the
-message is consumed, so `OnUnresolvedTenant` applies to an id the store does not have. `SetTenant` refuses the id
+message is consumed, so `OnUnresolvedTenant` applies to an id the store does not have. `WithTenant` refuses the id
 Tenantry reserves for "no tenant" (`Guid.Empty`, `0`, an empty string).
 
 ## Routing slips
@@ -92,7 +94,7 @@ A routing slip (MassTransit Courier) carries the tenant that was current when it
 activity executes, and compensates, as that tenant: the activity, and the scoped services MassTransit creates it
 with, see it in `ITenantContext<TKey>`. Each activity passes the tenant on to the next, and to the events the
 routing slip publishes. To execute a routing slip for a tenant by name, send it to its first activity, as
-`Execute` does, with `SetTenant`:
+`Execute` does, with `WithTenant`:
 
 ```csharp
 using MassTransit;
@@ -103,7 +105,7 @@ public sealed class Fulfilment(ISendEndpointProvider sendEndpoints)
     public async Task StartAsync(string tenantId, RoutingSlip routingSlip)
     {
         var firstActivity = await sendEndpoints.GetSendEndpoint(routingSlip.GetNextExecuteAddress()!);
-        await firstActivity.Send(routingSlip, context => context.SetTenant(tenantId));
+        await firstActivity.Send(routingSlip, context => context.WithTenant(tenantId));
     }
 }
 ```

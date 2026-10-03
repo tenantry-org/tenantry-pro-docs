@@ -14,7 +14,7 @@ namespace Tenantry.Pro.Samples.TenantLifecycle;
 public sealed partial class TenantOnboarding(
     CatalogDbContext catalog,
     ITenantProvisioner<string> provisioner,
-    ITenantStoreCache<string> cache)
+    ITenantInvalidator<string> invalidator)
 {
     /// <summary>
     /// Whether an id may name a new tenant. It becomes part of the tenant's database name and connection string, so
@@ -63,7 +63,7 @@ public sealed partial class TenantOnboarding(
 
         // The cache would serve the tenant as active until its entry expired. The catalog's id, not the one asked for:
         // the database may have matched another casing.
-        cache.Invalidate(tenant.TenantId);
+        await invalidator.InvalidateAsync(tenant.TenantId, ct);
         return true;
     }
 
@@ -78,7 +78,7 @@ public sealed partial class TenantOnboarding(
                 .ExecuteUpdateAsync(setters => setters.SetProperty(t => t.Status, TenantStatus.Active), ct) == 1)
         {
             // A request made while the tenant was provisioning cached it as not active.
-            cache.Invalidate(tenant.TenantId);
+            await invalidator.InvalidateAsync(tenant.TenantId, ct);
         }
 
         return result;

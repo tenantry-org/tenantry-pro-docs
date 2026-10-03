@@ -4,6 +4,9 @@ Tenantry.Pro's packages are published to a **private GitHub Packages feed** owne
 GitHub organisation. Tenantry core (`Tenantry.Core`, `Tenantry.AspNetCore`, `Tenantry.EfCore`) and
 everything else stay on nuget.org. This page sets up a machine and a CI pipeline to restore from both.
 
+A private Tenantry feed will replace GitHub Packages before Tenantry.Pro goes on sale. After a subscription ends, it
+will still let you restore the versions released while you subscribed, security patches included.
+
 ## What you need
 
 1. **A Tenantry Pro subscription**, and your GitHub account connected on your
@@ -175,9 +178,10 @@ page. For CI, use a token from that account (or connect a dedicated machine acco
 
 ## When your subscription ends
 
-The connected account is removed from `tenantry-org`, so restores from the private feed fail. The versions
-you already have keep working with your key. If you need to rebuild after the subscription ends, keep
-copies of the packages you use, for example in your own internal feed or a committed local package folder.
+The connected account is removed from `tenantry-org`, so restores from the GitHub feed fail. The versions you
+already have keep working with your key. Keep copies of the packages you use, for example in your own internal feed
+or a committed local package folder. Until the Tenantry feed replaces it, email support@tenantry.dev for the latest
+patch of a minor version released while you subscribed.
 
 ## Troubleshooting
 

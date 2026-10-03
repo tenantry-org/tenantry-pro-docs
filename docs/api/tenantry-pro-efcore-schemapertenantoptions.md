@@ -18,6 +18,24 @@ public sealed class SchemaPerTenantOptions<TKey> where TKey : IEquatable<TKey>, 
 
 ## Properties
 
+### `Contexts`
+
+The context types that get the tenant's schema, and their subclasses; the other contexts that use `UseTenantry()` (one over reference data with `ITenantEntity` rows, say) stay in the shared schema and keep Tenantry's filters. Empty, the default, means the one context type that uses `UseTenantry()`: list them when there is more than one.
+
+```csharp
+public IList<Type> Contexts { get; }
+```
+
+Value: `IList<Type>`
+
+Left empty while more than one context type uses `UseTenantry()`, schema per tenant cannot tell which     of them get the tenant's schema, so it fails closed with `InvalidOperationException`, which     names them: when the host starts, for the contexts the application registers (with `AddDbContext`,     `AddDbContextFactory` or Tenantry Core's `AddDbContextPerTenantDatabase`, say), and before     `migrate-tenants` or the migration runner migrates a tenant. A context built another way, or whose     options cannot be built without a tenant, fails when its options are built, and from then on so does     every schema-per-tenant context of the application: none is moved into the tenant's schema, or left out of     it, by guesswork.
+
+A context type that derives from another counts as that one, as it would when listed: a test's context that     derives from `AppDbContext` needs no list. Two that derive from a common base, and not from one     another, are two contexts.
+
+```csharp
+o.Contexts.Add(typeof(AppDbContext));
+```
+
 ### `GetSchemaName`
 
 Returns the name of a tenant's schema. Required. It is called often, so it must be fast, and it must give the same name for a tenant each time; tenants given the same name share a schema. In mixed mode it is called only for [`TenantIsolation.Schema`](tenantry-pro-tenantisolation.md) tenants.

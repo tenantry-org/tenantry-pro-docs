@@ -50,11 +50,9 @@ public sealed class MyTenantStore : ITenantStore<string>
 }
 ```
 
-> `MigrateTenantAsync` looks the tenant up with `GetTenantAsync`; migration runs, health checks and
-> `TenantBackgroundService` enumerate `GetAllTenantsAsync`. So your store must return **every**
-> tenant that exists, suspended ones included, from both. Refuse suspended tenants in HTTP requests with an
-> access validator instead (see [Tenant lifecycle](tenant-lifecycle.md#when-provisioning-fails)), and check
-> the status yourself in background work (see [Background jobs](background-jobs.md#suspended-tenants)).
+> Return every tenant from the store, suspended ones included: migrations reach only the tenants it lists
+> ([why](migration-orchestration.md#which-tenants-are-migrated)). Stop work for a suspended tenant with Tenantry
+> Core's `ValidateTenantActivity` instead ([Suspended tenants](background-jobs.md#suspended-tenants)).
 
 Your `DbContext` is a plain EF Core context — with database-per-tenant the connection string already
 points at the right database, so no per-tenant code is needed inside it:
@@ -113,6 +111,7 @@ app.UseTenantry();   // Tenantry core: resolves the tenant and opens the scope f
 
 app.MapGet("/orders", (AppDbContext db) => db.Orders.ToListAsync());
 
+// An administrator's operation: protect it with a policy of your own.
 app.MapPost("/tenants/{id}/provision",
     async (string id, ITenantStore<string> store, ITenantProvisioner<string> provisioner, CancellationToken ct) =>
     {
@@ -122,14 +121,16 @@ app.MapPost("/tenants/{id}/provision",
 
         var result = await provisioner.ProvisionAsync(tenant, ct);
         return result.Succeeded ? Results.Ok() : Results.StatusCode(StatusCodes.Status500InternalServerError);
-    });
+    }).RequireAuthorization("TenantAdmin");
 
 app.Run();
 return 0;
 ```
 
-A request with header `X-Tenant-Id: acme` now reads and writes `app_acme`; `X-Tenant-Id: globex`
-hits `app_globex`. Neither can see the other's rows because they are different databases. Run the application with
+A request with header `X-Tenant-Id: acme` now reads and writes `app_acme`, and `X-Tenant-Id: globex` hits
+`app_globex`. The header is whatever the client sends, though, so in a real application authenticate requests and
+check the caller may use the tenant, for example with `tenant.ValidateTenantAccessByClaim("tenant_id")` (Tenantry
+core's [access control](https://github.com/tenantry-org/tenantry-core/blob/master/docs/access-control.md)). Run the application with
 `migrate-tenants` once per deployment, before the new version serves requests, to migrate every tenant's
 database (see [Tenant migrations](migration-orchestration.md)).
 
@@ -137,9 +138,9 @@ database (see [Tenant migrations](migration-orchestration.md)).
 
 Pro needs your licence key, from your [Pro access page](https://tenantry.dev/dashboard/pro). `UsePro` reads it
 from the `Tenantry:License` setting, so it needs no code. The key does not expire, so you set it once. Without a
-valid key the application does not start (`LicenseRequiredException`), so a missing or mistyped key shows up
-right away. Store the key outside source control — for example in user secrets, or the `Tenantry__License`
-environment variable — and give it to CI as a secret. See [Licensing](licensing.md) for the full model.
+valid key the application does not start (`LicenseRequiredException`). Keep the key out of source control (in
+user secrets, or the `Tenantry__License` environment variable), give it to CI as a secret, and set it in every
+environment, production included. See [Licensing](licensing.md).
 
 ## Where to go next
 

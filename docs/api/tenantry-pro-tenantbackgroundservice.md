@@ -2,7 +2,7 @@
 
 Namespace: `Tenantry.Pro` · Package: `Tenantry.Pro` · [API reference](README.md)
 
-Base class for a hosted service that performs work for every tenant once, then completes. Each tenant is processed inside its own combined DI + tenant scope, and a failure processing one tenant is logged and isolated so it never aborts the sweep of the remaining tenants.
+Base class for a hosted service that does work for every active tenant once, then completes. Each tenant's work runs in its own scope, with a log scope with `TenantId` open on [`TenantBackgroundService<TKey>.Logger`](tenantry-pro-tenantbackgroundservice.md). A tenant that fails is logged and the others go on; a tenant `ValidateTenantActivity` refuses is skipped.
 
 Override [`TenantBackgroundService<TKey>.ExecuteForTenantAsync`](tenantry-pro-tenantbackgroundservice.md) with the per-tenant work; resolve scoped services (your `DbContext`, repositories, …) from the scope's `ServiceProvider`, which is already bound to the tenant. Register the subclass with `builder.Services.AddHostedService<MySweep>()`. For recurring work, derive from [`PeriodicTenantBackgroundService<TKey>`](tenantry-pro-periodictenantbackgroundservice.md) instead.
 
@@ -24,7 +24,7 @@ Derived types: [`PeriodicTenantBackgroundService<TKey>`](tenantry-pro-periodicte
 
 ### `TenantBackgroundService(ITenantScopeFactory<TKey>, ITenantLookup<TKey>, ILogger)`
 
-Base class for a hosted service that performs work for every tenant once, then completes. Each tenant is processed inside its own combined DI + tenant scope, and a failure processing one tenant is logged and isolated so it never aborts the sweep of the remaining tenants.
+Base class for a hosted service that does work for every active tenant once, then completes. Each tenant's work runs in its own scope, with a log scope with `TenantId` open on [`TenantBackgroundService<TKey>.Logger`](tenantry-pro-tenantbackgroundservice.md). A tenant that fails is logged and the others go on; a tenant `ValidateTenantActivity` refuses is skipped.
 
 ```csharp
 protected TenantBackgroundService(ITenantScopeFactory<TKey> scopeFactory, ITenantLookup<TKey> tenantLookup, ILogger logger)
@@ -85,7 +85,7 @@ Returns: `Task`
 
 ### `RunForAllTenantsAsync(CancellationToken)`
 
-Runs [`TenantBackgroundService<TKey>.ExecuteForTenantAsync`](tenantry-pro-tenantbackgroundservice.md) for every tenant in the store, one at a time, with per-tenant failure isolation. Exposed so [`PeriodicTenantBackgroundService<TKey>`](tenantry-pro-periodictenantbackgroundservice.md) can invoke it on each tick.
+Runs [`TenantBackgroundService<TKey>.ExecuteForTenantAsync`](tenantry-pro-tenantbackgroundservice.md) for every active tenant in the store, one at a time, with per-tenant failure isolation. Exposed so [`PeriodicTenantBackgroundService<TKey>`](tenantry-pro-periodictenantbackgroundservice.md) can invoke it on each tick.
 
 ```csharp
 protected Task RunForAllTenantsAsync(CancellationToken cancellationToken)

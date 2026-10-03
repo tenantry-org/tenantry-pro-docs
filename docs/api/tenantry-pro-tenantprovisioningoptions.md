@@ -12,7 +12,7 @@ public sealed class TenantProvisioningOptions
 
 ### `StopOnFailure`
 
-Whether a failed step stops provisioning, so the steps after it are reported as [`TenantProvisioningStepStatus.NotRun`](tenantry-pro-tenantprovisioningstepstatus.md). Defaults to [true](https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool): seeding a tenant whose migrations failed, say, would fail too. With [false](https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool), every step runs.
+Whether a failed step stops provisioning, so the steps after it are reported as [`TenantLifecycleStepStatus.NotRun`](tenantry-pro-tenantlifecyclestepstatus.md). Defaults to [true](https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool): seeding a tenant whose migrations failed, say, would fail too. With [false](https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool), every step runs.
 
 ```csharp
 public bool StopOnFailure { get; set; }

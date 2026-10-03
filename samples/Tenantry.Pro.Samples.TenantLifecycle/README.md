@@ -12,7 +12,7 @@ Demonstrates:
   requests use active tenants only.
 - Onboarding (`TenantOnboarding`): the tenant is added to the catalog first, as `Provisioning`, because the
   provisioner works on tenants in the store; once every step has succeeded it becomes `Active`, and is removed from
-  the cache (`ITenantStoreCache<string>.Invalidate`), where a request made during provisioning left it not active.
+  the cache (`ITenantInvalidator<string>.InvalidateAsync`), where a request made during provisioning left it not active.
 - `pro.AddDatabaseProvisioning<AppDbContext>()`: step 1 (`CREATE DATABASE`, through EF Core's database creator).
 - `pro.AddMigrations<AppDbContext>()`: step 2 (apply the EF Core migration in `Migrations/`, generated with
   `dotnet ef migrations add --context AppDbContext` through `DesignTimeAppDbContextFactory`, through the tenant's own

@@ -12,7 +12,7 @@ public static class TenantryMassTransitBusFactoryConfiguratorExtensions
 
 ### `UseTenantry(IBusFactoryConfigurator, IBusRegistrationContext)`
 
-Adds Tenantry's publish, send, consume and routing-slip activity filters to the bus, for every receive endpoint: a message published or sent while a tenant is current carries it (or the tenant set with `SetTenant`), and is consumed as that tenant. Requires `pro.AddMassTransitPropagation()`.
+Adds Tenantry's publish, send, consume and routing-slip activity filters to the bus, for every receive endpoint: a message published or sent while a tenant is current carries it (or the tenant set with `WithTenant`), and is consumed as that tenant. Requires `pro.AddMassTransitPropagation()`.
 
 ```csharp
 public static void UseTenantry(this IBusFactoryConfigurator configurator, IBusRegistrationContext context)

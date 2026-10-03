@@ -15,8 +15,8 @@ public static class TenantryProEfCoreBuilderExtensions
 Audit logging: records the changes every context that uses `UseTenantry()` saves, as [`AuditEntry`](tenantry-pro-efcore-auditentry.md) values with the current tenant, and passes them to [`IAuditStore`](tenantry-pro-efcore-iauditstore.md): by default once they are committed ([`AuditOptions.Timing`](tenantry-pro-efcore-auditoptions.md)). The default store writes each entry to the log; register your own [`IAuditStore`](tenantry-pro-efcore-iauditstore.md), with any lifetime, to replace it.
 
 ```csharp
-[RequiresUnreferencedCode("Audit logging reads EF Core's change tracker, which uses reflection and is not trim-safe.")]
-[RequiresDynamicCode("Audit logging uses EF Core, which generates code at run time and is not Native AOT-compatible.")]
+[RequiresUnreferencedCode("EF Core reads entity types and their properties through reflection, which trimming can break. See https://aka.ms/efcore-docs-trimming.")]
+[RequiresDynamicCode("EF Core builds its model and queries at run time, which Native AOT does not support.")]
 public static IProBuilder<TKey> AddAuditLogging<TKey>(this IProBuilder<TKey> pro, Action<AuditOptions>? configure = null) where TKey : IEquatable<TKey>, IParsable<TKey>
 ```
 
@@ -44,11 +44,40 @@ tenant.UsePro(pro => pro.AddAuditLogging());
 builder.Services.AddScoped<IAuditStore, MyDatabaseAuditStore>();
 ```
 
+### `AddDatabaseDeprovisioning<TContext>(IProBuilder, Action<DatabaseDeprovisioningOptions<TContext>>?)`
+
+Adds dropping each tenant's database to offboarding ([`ITenantDeprovisioner<TKey>`](tenantry-pro-itenantdeprovisioner.md)), as the `DropDatabase` step, after the application's deprovisioning steps and `DeleteSharedData`. It drops the database `TContext` connects to for the tenant, through EF Core's database creator (on SQL Server, after ending other sessions in it). In mixed mode it applies only to [`TenantIsolation.Database`](tenantry-pro-tenantisolation.md) tenants.
+
+```csharp
+[RequiresUnreferencedCode("EF Core reads entity types and their properties through reflection, which trimming can break. See https://aka.ms/efcore-docs-trimming.")]
+[RequiresDynamicCode("EF Core builds its model and queries at run time, which Native AOT does not support.")]
+public static IProBuilder AddDatabaseDeprovisioning<TContext>(this IProBuilder pro, Action<DatabaseDeprovisioningOptions<TContext>>? configure = null) where TContext : DbContext
+```
+
+Type parameters:
+
+- `TContext`: The context whose database is dropped, with any relational EF Core provider.
+
+Parameters:
+
+- `pro` [`IProBuilder`](tenantry-pro-iprobuilder.md): The Pro builder.
+- `configure` `Action<DatabaseDeprovisioningOptions<TContext>>`: Optionally sets how the context is created ([`DatabaseDeprovisioningOptions<TContext>.CreateContext`](tenantry-pro-efcore-databasedeprovisioningoptions.md)).
+
+Returns: [`IProBuilder`](tenantry-pro-iprobuilder.md): The same builder, without its key type: in a chain, call it after methods that need the key type.
+
+It is refused when another tenant's context connects to a database of the same name, unless that database says it is another one (SQL Server's database GUID, PostgreSQL's `system_identifier`, MySQL's `server_uuid`), and when another tenant's context cannot be created, or its database asked, to check. A database that does not exist counts as dropped. On PostgreSQL, connections other instances of the application hold open make the drop fail; offboarding again succeeds once they close.
+
+```csharp
+tenant.UsePro(pro => pro.AddDatabaseProvisioning<AppDbContext>().AddDatabaseDeprovisioning<AppDbContext>());
+```
+
 ### `AddDatabaseProvisioning<TContext>(IProBuilder, Action<DatabaseProvisioningOptions<TContext>>?)`
 
 Adds creating each tenant's database to tenant provisioning ([`ITenantProvisioner<TKey>`](tenantry-pro-itenantprovisioner.md)), as the `CreateDatabase` step, which runs first. It creates the database `TContext` connects to for the tenant, through EF Core's database creator, unless it exists. In mixed mode it applies only to [`TenantIsolation.Database`](tenantry-pro-tenantisolation.md) tenants.
 
 ```csharp
+[RequiresUnreferencedCode("EF Core reads entity types and their properties through reflection, which trimming can break. See https://aka.ms/efcore-docs-trimming.")]
+[RequiresDynamicCode("EF Core builds its model and queries at run time, which Native AOT does not support.")]
 public static IProBuilder AddDatabaseProvisioning<TContext>(this IProBuilder pro, Action<DatabaseProvisioningOptions<TContext>>? configure = null) where TContext : DbContext
 ```
 
@@ -96,11 +125,36 @@ In mixed mode the provisioning step applies to [`TenantIsolation.Database`](tena
 tenant.UsePro(pro => pro.AddMigrations<AppDbContext>());
 ```
 
+### `AddSchemaDeprovisioning<TContext>(IProBuilder, Action<SchemaDeprovisioningOptions<TContext>>?)`
+
+Adds dropping each tenant's schema to offboarding ([`ITenantDeprovisioner<TKey>`](tenantry-pro-itenantdeprovisioner.md)), as the `DropSchema` step, after the application's deprovisioning steps and `DeleteSharedData`: its foreign keys, tables (the migration history among them) and sequences, then the schema, in one transaction, in the database `TContext` connects to for the tenant. In mixed mode it applies only to [`TenantIsolation.Schema`](tenantry-pro-tenantisolation.md) tenants.
+
+```csharp
+[RequiresUnreferencedCode("EF Core reads entity types and their properties through reflection, which trimming can break. See https://aka.ms/efcore-docs-trimming.")]
+[RequiresDynamicCode("EF Core builds its model and queries at run time, which Native AOT does not support.")]
+public static IProBuilder AddSchemaDeprovisioning<TContext>(this IProBuilder pro, Action<SchemaDeprovisioningOptions<TContext>>? configure = null) where TContext : DbContext
+```
+
+Type parameters:
+
+- `TContext`: The context, on SQL Server or PostgreSQL, whose database the schema is dropped from.
+
+Parameters:
+
+- `pro` [`IProBuilder`](tenantry-pro-iprobuilder.md): The Pro builder.
+- `configure` `Action<SchemaDeprovisioningOptions<TContext>>`: Optionally sets how the context is created ([`SchemaDeprovisioningOptions<TContext>.CreateContext`](tenantry-pro-efcore-schemadeprovisioningoptions.md)).
+
+Returns: [`IProBuilder`](tenantry-pro-iprobuilder.md): The same builder, without its key type: in a chain, call it after methods that need the key type.
+
+It needs `pro.UseSchemaPerTenant(...)`: without it, the application does not start. It is refused when another tenant on the same database uses the schema (its schema is that one, or its model maps anything into it, directly or through its connection's default schema), when the schema is the database's default schema, and when another tenant's context cannot be created, or what it uses read, to check. A schema that does not exist counts as dropped. Objects other than tables and sequences (views, functions) stay, and dropping the schema then fails: drop them in a deprovisioning step of your own.
+
 ### `AddSchemaProvisioning<TContext>(IProBuilder, Action<SchemaProvisioningOptions<TContext>>?)`
 
 Adds creating each tenant's schema to tenant provisioning ([`ITenantProvisioner<TKey>`](tenantry-pro-itenantprovisioner.md)), as the `CreateSchema` step, which runs first. It creates the tenant's schema (`UseSchemaPerTenant`), unless it exists, in the database `TContext` connects to for the tenant. In mixed mode it applies only to [`TenantIsolation.Schema`](tenantry-pro-tenantisolation.md) tenants.
 
 ```csharp
+[RequiresUnreferencedCode("EF Core reads entity types and their properties through reflection, which trimming can break. See https://aka.ms/efcore-docs-trimming.")]
+[RequiresDynamicCode("EF Core builds its model and queries at run time, which Native AOT does not support.")]
 public static IProBuilder AddSchemaProvisioning<TContext>(this IProBuilder pro, Action<SchemaProvisioningOptions<TContext>>? configure = null) where TContext : DbContext
 ```
 
@@ -117,11 +171,39 @@ Returns: [`IProBuilder`](tenantry-pro-iprobuilder.md): The same builder, without
 
 It needs `pro.UseSchemaPerTenant(...)`: without it, the application does not start. The step creates the schema with EF Core's migrations SQL, so only SQL Server and PostgreSQL are supported (MySQL has no schemas apart from databases); another provider fails the step with `NotSupportedException`. A schema name too long for the database, or with control characters, fails it with `InvalidOperationException`. Its credentials must be allowed to create schemas, or set [`SchemaProvisioningOptions<TContext>.CreateContext`](tenantry-pro-efcore-schemaprovisioningoptions.md).
 
-### `UseSchemaPerTenant<TKey>(IProBuilder<TKey>, Action<SchemaPerTenantOptions<TKey>>)`
+### `AddSharedDataDeletion<TContext>(IProBuilder)`
 
-Schema per tenant: each tenant's tables in a schema of its own. Every context that uses `UseTenantry()` gets the current tenant's schema as its default schema, with a compiled model per schema; nothing in the context or its registration names the schema.
+Adds deleting a tenant's rows from the shared database to offboarding ([`ITenantDeprovisioner<TKey>`](tenantry-pro-itenantdeprovisioner.md)), as the `DeleteSharedData` step, after the application's deprovisioning steps and before any drop: every row of `TContext`'s tenant-owned entities (`ITenantEntity<TKey>`) with the tenant's id, table by table, rows that reference another's first, in one transaction. In mixed mode it applies to [`TenantIsolation.Shared`](tenantry-pro-tenantisolation.md) tenants, and to [`TenantIsolation.Schema`](tenantry-pro-tenantisolation.md) tenants when schema per tenant leaves `TContext` in the shared schema ([`SchemaPerTenantOptions<TKey>.Contexts`](tenantry-pro-efcore-schemapertenantoptions.md)), and to [`TenantIsolation.Database`](tenantry-pro-tenantisolation.md) tenants unless `AddDatabaseDeprovisioning` drops `TContext`'s database.
 
 ```csharp
+[RequiresUnreferencedCode("EF Core reads entity types and their properties through reflection, which trimming can break. See https://aka.ms/efcore-docs-trimming.")]
+[RequiresDynamicCode("EF Core builds its model and queries at run time, which Native AOT does not support.")]
+public static IProBuilder AddSharedDataDeletion<TContext>(this IProBuilder pro) where TContext : DbContext
+```
+
+Type parameters:
+
+- `TContext`: The context, on the shared database, whose tenant-owned tables are cleared.
+
+Parameters:
+
+- `pro` [`IProBuilder`](tenantry-pro-iprobuilder.md): The Pro builder.
+
+Returns: [`IProBuilder`](tenantry-pro-iprobuilder.md): The same builder, without its key type: in a chain, call it after methods that need the key type.
+
+Rows of tables that cascade from those (owned types in tables of their own, many-to-many links) go with them, through the database's cascades. A table that is not tenant-owned and references a tenant's row makes the delete fail, and nothing is deleted; so does a cycle of references between tenant-owned tables, and a context with no tenant-owned table. Add the context once for each database whose rows go.
+
+```csharp
+tenant.UsePro(pro => pro.AddSharedDataDeletion<AppDbContext>());
+```
+
+### `UseSchemaPerTenant<TKey>(IProBuilder<TKey>, Action<SchemaPerTenantOptions<TKey>>)`
+
+Schema per tenant: each tenant's tables in a schema of its own. The context that uses `UseTenantry()`, or with more than one those [`SchemaPerTenantOptions<TKey>.Contexts`](tenantry-pro-efcore-schemapertenantoptions.md) lists, gets the current tenant's schema as its default schema, with a compiled model per schema; nothing in the context or its registration names the schema.
+
+```csharp
+[RequiresUnreferencedCode("EF Core reads entity types and their properties through reflection, which trimming can break. See https://aka.ms/efcore-docs-trimming.")]
+[RequiresDynamicCode("EF Core builds its model and queries at run time, which Native AOT does not support.")]
 public static IProBuilder<TKey> UseSchemaPerTenant<TKey>(this IProBuilder<TKey> pro, Action<SchemaPerTenantOptions<TKey>> configure) where TKey : IEquatable<TKey>, IParsable<TKey>
 ```
 
@@ -138,9 +220,11 @@ Returns: [`IProBuilder<TKey>`](tenantry-pro-iprobuilder-1.md): The same `pro` fo
 
 The schema is the model's default schema, set after `OnModelCreating`, so it applies to every table     without a schema of its own. Without a current tenant (design-time tools such as `dotnet ef`, say) the     model has no default schema, so migrations are generated without one. In mixed mode only     [`TenantIsolation.Schema`](tenantry-pro-tenantisolation.md) tenants get a schema; the others keep the database's default.
 
+A context's first command or save throws `TenantNotResolvedException` without a current     tenant, and [`TenantIsolationViolationException`](https://tenantry.dev/docs/core/api/tenantry-efcore-tenantisolationviolationexception) under a tenant other than the one whose schema     its model was built for.
+
 The contexts cannot be pooled: a pooled context keeps the model of the first tenant it served. Creating one     with `AddDbContextPool`, `AddPooledDbContextFactory` or Tenantry Core's     `AddDbContextPerTenantDatabase` with `pooled: true` throws `InvalidOperationException`.     Each context type also gets a model cache sized for [`SchemaPerTenantOptions<TKey>.MaxCachedSchemas`](tenantry-pro-efcore-schemapertenantoptions.md)     schemas, in place of EF Core's, in an EF Core internal service provider of its own that the applications in     the process share; EF Core throws once a process has built more than 20 of them. `UseMemoryCache`, or     `ReplaceService` of `IModelCacheKeyFactory` or `IMemoryCache`, on their options throws     `InvalidOperationException`.
 
-Options that are not valid (no `GetSchemaName`, a cache size out of range) stop the application from     starting.
+Options that are not valid (no `GetSchemaName`, a cache size out of range) stop the application from     starting, as does more than one context type that uses `UseTenantry()` with none listed in     [`SchemaPerTenantOptions<TKey>.Contexts`](tenantry-pro-efcore-schemapertenantoptions.md).
 
 ```csharp
 tenant.UsePro(pro => pro.UseSchemaPerTenant(o => o.GetSchemaName = t => $"tenant_{t.TenantId}"));

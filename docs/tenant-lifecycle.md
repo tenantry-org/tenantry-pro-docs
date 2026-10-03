@@ -2,7 +2,9 @@
 
 Creating a new tenant usually means several steps in order: create its database or schema, apply
 migrations, then seed initial data. `ITenantProvisioner<TKey>` runs those steps behind a single call
-and reports what happened to each one.
+and reports what happened to each one. Removing a tenant is the same in reverse:
+`ITenantDeprovisioner<TKey>` runs your export or archive steps, then drops the tenant's database or schema, or
+deletes its rows from a shared database, and reports each step (see [Offboarding a tenant](#offboarding-a-tenant)).
 
 ## The steps
 
@@ -172,7 +174,7 @@ A step that fails is reported in the result rather than thrown. `ProvisionAsync`
 | `Error` | The exception the first failed step threw, or `null` |
 | `Duration` | Wall-clock time for the whole call |
 
-Each `TenantProvisioningStepResult` has the step's `Name` (`CreateDatabase`, `CreateSchema`, `Migrations`, or
+Each `TenantLifecycleStepResult` has the step's `Name` (`CreateDatabase`, `CreateSchema`, `Migrations`, or
 the type name of your step or seeder), its `Status`, its `Error` and its `Duration`. The statuses are
 `Succeeded`, `Failed`, `Skipped` (the step does not apply to the tenant) and `NotRun` (an earlier step failed).
 
@@ -180,7 +182,7 @@ the type name of your step or seeder), its `Status`, its `Error` and its `Durati
 var result = await provisioner.ProvisionAsync(descriptor, ct);
 if (!result.Succeeded)
     logger.LogError(result.Error, "Provisioning tenant {Id} failed at {Step}",
-        result.TenantId, result.Steps.First(step => step.Status == TenantProvisioningStepStatus.Failed).Name);
+        result.TenantId, result.Steps.First(step => step.Status == TenantLifecycleStepStatus.Failed).Name);
 ```
 
 ## When provisioning fails
@@ -190,10 +192,8 @@ built-in step is safe to repeat: creating the database or schema skips one that 
 migrations apply only what is pending.
 
 **Two runs at once** for the same tenant (a double submit, a redelivered message) both get past creating the
-database or schema: that is safe to run concurrently on every provider. The
-migration step is not always: EF Core 9 and later make the second run wait for the first on SQL Server and
-MySQL, but on PostgreSQL with EF Core 10 and later, and on every provider with EF Core 8, one run can fail
-with "already exists" on a migration the other applied. Your seeders and steps must also tolerate a concurrent
+database or schema, which is safe. The migration step may fail in one of them, depending on the EF Core version
+([Multiple instances](migration-orchestration.md#multiple-instances)). Your seeders and steps must also tolerate a concurrent
 run, for example by treating a unique-key violation as "already seeded". Better, let only one onboarding run
 per tenant (deduplicate the request or the message); otherwise a failed run is repaired by running
 `ProvisionAsync` again. Your seeders must be safe to repeat too (see
@@ -212,41 +212,143 @@ default `StopOnFailure = true`):
 
 With `StopOnFailure = false`, later steps still run after a failure; each step's outcome is in `Steps`.
 
-**Failed migrations.** On SQL Server and PostgreSQL, EF Core 8 and EF Core 10 or later apply each migration
-in its own transaction, so a failed migration leaves the earlier ones applied and none of its own changes;
-a retry applies it again. On those two, EF Core 9, which Tenantry.Pro's `net9.0` build uses, applies all
-pending migrations in one transaction, so a failure usually leaves none of them applied (a migration
-containing a `suppressTransaction: true` statement commits what ran before it). The provisioning result does not
-say which migrations were committed: check the tenant with `ITenantMigrationRunner.GetTenantStatusAsync`. To get a
-list per run, migrate with `MigrateTenantAsync`, whose result lists what that run applied (see
-[Tenant migrations](migration-orchestration.md#failure-model)).
-**MySQL does not roll back DDL**: each schema statement commits on its own, so the migrations before the
-failing one stay applied on every EF Core version, and a migration that fails part way can leave some of
-its tables or columns in place, and the retry then fails on them ("already
-exists"). Inspect the database and finish or undo that migration's changes by hand before retrying.
+**Failed migrations.** What a failed migration leaves applied depends on the EF Core version and database
+([Tenant migrations](migration-orchestration.md#failure-model)). Check the tenant with `GetTenantStatusAsync` before
+retrying; on MySQL, finish or undo a half-applied migration by hand first.
 
-**The tenant stays in your store.** Failed or cancelled provisioning does not remove the tenant, so requests
-for it are still resolved and reach a database that may be missing tables or data. Keep a status on your
-tenant (for example `Provisioning` → `Active` → `Suspended`), set it to active only after `ProvisionAsync`
-succeeds, and reject requests for tenants that are not active with an access validator
-(`tenant.ValidateTenantAccess(...)`; see
-[Suspended and inactive tenants](https://github.com/tenantry-org/tenantry-core/blob/master/docs/tenant-stores.md#suspended-and-inactive-tenants) in Tenantry
-core). Validators run only for HTTP requests, so background work must check the status itself (see
-[Background jobs](background-jobs.md#suspended-tenants)).
-
-Never hide a tenant from the store, whatever its status (provisioning, active or suspended):
-`MigrateTenantAsync` looks it up there, and migration runs, migration status and the health checks cover
-only the tenants the store lists. A tenant hidden while it is suspended misses every migration and fails
-when it is reactivated.
+**The tenant stays in your store.** Failed or cancelled provisioning does not remove the tenant, so requests for
+it are still resolved and reach a database that may be missing tables or data. Keep a status on your tenant (for
+example `Provisioning`, `Active`, `Suspended`), set it to active only after `ProvisionAsync` succeeds, and refuse
+the others with Tenantry Core's `ValidateTenantActivity`, which stops their requests and their background work
+([Suspended tenants](background-jobs.md#suspended-tenants)). Keep every tenant in the store, whatever its status
+([why](migration-orchestration.md#which-tenants-are-migrated)).
 
 The [TenantLifecycle sample](../samples/Tenantry.Pro.Samples.TenantLifecycle) onboards tenants from a catalog
 database this way: it adds each tenant as provisioning, provisions it, and makes it active, then removes it from the
 tenant cache. It walks through a failed seed and the retry that completes it without duplicating anything, and
 suspends a tenant.
 
+## Offboarding a tenant
+
+`ITenantDeprovisioner<TKey>.DeprovisionAsync(tenant)` removes what a tenant has, in this order:
+
+```
+DeprovisionAsync(tenant)
+   │
+   ├─ your steps                  ← AddDeprovisioningStep<T>, in the order you add them: export, archive, notify
+   ├─ DeleteSharedData            ← AddSharedDataDeletion<TContext>, undone if it fails, so before any drop
+   ├─ DropDatabase / DropSchema   ← AddDatabaseDeprovisioning<TContext> / AddSchemaDeprovisioning<TContext>
+   └─ ClearCaches                 ← always added, not run after a failed step: everything Tenantry keeps for the tenant
+```
+
+```csharp
+tenant.UsePro(pro => pro
+    .AddDeprovisioningStep<ExportTenantData>()                                 // yours, first
+    .AddDatabaseDeprovisioning<AppDbContext>());                               // DropDatabase, after it
+```
+
+Your steps implement `ITenantDeprovisioningStep<TKey>`, which is shaped like a provisioning step: it is resolved
+from a scope for the tenant, `AppliesTo` decides whether it runs, and `context.Isolation` gives its isolation in
+mixed mode. They run while the tenant's data is still there. `UsePro` always registers
+`ITenantDeprovisioner<TKey>`, as a singleton.
+
+- **The tenant must be inactive.** Before any step, `DeprovisionAsync` clears this instance's cached copy of the
+  tenant and reads it from the store again. If the store still has it and it is active, it throws
+  `InvalidOperationException` and runs nothing. Suspend it first, so a `ValidateTenantActivity` validator refuses it,
+  or remove it from the store. Without a validator every tenant is active, so remove it from the store first.
+- **Nothing is dropped unless you ask.** `DropDatabase` and `DropSchema` are steps only with
+  `AddDatabaseDeprovisioning` or `AddSchemaDeprovisioning`. Provisioning does not add them, and a database or schema
+  created outside Tenantry can still be dropped.
+- **A failed step stops offboarding.** The steps after it are reported as `NotRun`, so a failed export never lets
+  the drop run. There is no `StopOnFailure` setting for offboarding. `ClearCaches` does not run either: call
+  `ITenantInvalidator<TKey>.InvalidateAsync` yourself if you need the caches cleared.
+- **A database or schema another tenant's context reaches is not dropped.** Before dropping, the step creates every
+  other tenant's context and reads the database it connects to, so `Database` and `Initial Catalog` are the same. When
+  another tenant's database has the same name on a server written another way (`tcp:db,1433` and `db`, `localhost`
+  and `127.0.0.1`), the step asks both databases which they are: SQL Server's database GUID, PostgreSQL's
+  `system_identifier` (from `pg_control_system()`), MySQL's `server_uuid`. If they match, or either cannot answer, the
+  drop is refused. For a schema, another tenant uses it if its own schema has that name, or if its model maps anything
+  (tables, views, sequences, migration history) into it, directly or through the connection's default schema. The
+  database's default schema (`dbo`, `public`) is never dropped. If another tenant uses it, or its context cannot be
+  created, or what it uses cannot be read, the step fails and nothing is dropped.
+- **Running it again is safe.** A database or schema that no longer exists counts as dropped, and deleting rows
+  again finds none. Recover from a failure by fixing the cause and calling `DeprovisionAsync` again. Your steps run
+  again too. When a drop finds the tenant's database or schema already gone, `context.DataDropped` is `true`: your
+  steps ran before that drop, so a step that reads the data should return without doing anything. Rows deleted from
+  a shared database are not detected, so an export that runs again should not replace an earlier one.
+- **Permissions.** The login needs to drop what it removes. `o.CreateContext`, in `AddDatabaseDeprovisioning` or
+  `AddSchemaDeprovisioning`, gives the step a context with another login.
+
+  | Database | To drop a database |
+  |----------|--------------------|
+  | SQL Server | `ALTER ANY DATABASE`, or `CONTROL` on the database |
+  | PostgreSQL | Ownership of the database (the login that created it), or superuser |
+  | MySQL | `DROP` |
+
+`DropDatabase` drops the database through the EF Core provider's database creator. On SQL Server, EF Core ends the
+other sessions in the database first. On PostgreSQL, Tenantry releases the connections this process has pooled to
+it, but a connection another instance of the application holds makes the drop fail; offboard again once it closes.
+
+`DropSchema` drops the schema's foreign keys, tables (the migration history among them) and sequences, then the
+schema, in one transaction. Views, functions and procedures are not dropped, and dropping the schema then fails:
+drop them in a step of your own, which runs first.
+
+`DeleteSharedData` (`pro.AddSharedDataDeletion<TContext>()`) is for a tenant in a shared database. In one
+transaction, it deletes the tenant's rows from every table of `TContext` whose entity implements
+`ITenantEntity<TKey>`, referencing rows first, and rows that cascade from them go too. It fails and deletes nothing
+when a table that is not tenant-owned references a tenant's row, when tables reference each other in a cycle, or
+when `TContext` has no tenant-owned table. Rows in tables without a tenant id stay: delete them in a step of your
+own.
+
+`ClearCaches` runs last, and invalidates the tenant (`ITenantInvalidator<TKey>.InvalidateAsync`): its cached descriptor
+and connection string, its Tenantry.Caching entries, cached responses and options. Each instance of the application
+has its own caches, and this clears only the instance that offboards.
+
+In [mixed mode](mixed-mode.md), `DropDatabase` applies only to `Database` tenants and `DropSchema` only to `Schema`
+tenants. `DeleteSharedData` applies to `Shared` tenants, to `Schema` tenants when schema per tenant leaves its
+context in the shared schema (a context over reference data that `SchemaPerTenantOptions.Contexts` does not list),
+and to `Database` tenants unless `AddDatabaseDeprovisioning` drops its context's database: their rows there are beside
+the shared tenants'.
+
+### Removing a tenant
+
+Suspend the tenant, offboard it while it is still in your store, then remove it:
+
+```csharp
+public sealed class TenantRemoval(
+    ITenantDeprovisioner<string> deprovisioner, IMyTenantRepository tenants, ITenantInvalidator<string> invalidator)
+{
+    public async Task<TenantDeprovisioningResult<string>> RemoveAsync(Tenant tenant, CancellationToken ct)
+    {
+        // 1. Stop its requests and background work: ValidateTenantActivity refuses a suspended tenant.
+        await tenants.SuspendAsync(tenant.TenantId, ct);
+        await invalidator.InvalidateAsync(tenant.TenantId, ct);
+
+        // 2. Export, drop, clear the caches.
+        var result = await deprovisioner.DeprovisionAsync(tenant, ct);
+
+        // 3. Remove it from the store only once its data is gone.
+        if (result.Succeeded)
+            await tenants.DeleteAsync(tenant.TenantId, ct);
+
+        return result;
+    }
+}
+```
+
+`Invalidate` clears only this instance's cache. With `CacheTenants` and several instances, the others serve the
+tenant as active until their copy expires (`TenantStoreCacheOptions.Duration`), so call `DeprovisionAsync` after
+that long, from a job or a queue, or clear the tenant on every instance first. A job or message that started before
+the suspension can still be running.
+
+`DeprovisionAsync` returns a `TenantDeprovisioningResult<TKey>`, with the same members as the provisioning result
+(`Succeeded`, `Steps`, `Error`, `Duration`). It throws in the same cases as `ProvisionAsync`: a reserved tenant id,
+a missing or invalid licence, a mixed mode `GetIsolation` that fails, and your cancellation token. It also throws
+for a tenant the store has and that is active.
+
 ## See also
 
 - [Database per tenant](database-per-tenant.md) · [Schema per tenant](schema-per-tenant.md) — creating the database or schema.
 - [Tenant migrations](migration-orchestration.md) — the migration step, and migrating every tenant.
-- [Mixed mode](mixed-mode.md) — which steps apply to which tenants.
+- [Mixed mode](mixed-mode.md) — which steps apply to which tenants, provisioning and offboarding.
 - [Background jobs & non-HTTP hosts](background-jobs.md) — steps and seeders use a tenant scope created the same way.

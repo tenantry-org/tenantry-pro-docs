@@ -11,7 +11,7 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<IAuditContextProvider, HttpAuditContextProvider>();
 ```
 
-It is called once for each save that has changes to record, before the changes are sent, in the code that     saves, so a failure stops the save. It is resolved from the saving context's scope (under `AddDbContext`,     the scope the context was created in), or from a scope created for the call when the context has none of its     own (pooled, or from an `IDbContextFactory`): there, read what you need from ambient state, such as     `IHttpContextAccessor`, rather than from scoped services.
+It is called once for each save that has changes to record, before the changes are sent, in the code that     saves, so a failure stops the save. It is resolved as [`IAuditStore`](tenantry-pro-efcore-iauditstore.md) is: for a context without a     scope of its own, read ambient state such as `IHttpContextAccessor` rather than scoped services.
 
 ```csharp
 public interface IAuditContextProvider

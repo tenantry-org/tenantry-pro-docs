@@ -41,14 +41,16 @@ Tenantry counts the ones Rebus.ServiceProvider adds; a bus you configure without
 
 ## Behaviour
 
-The tenant's id is carried in the `TenantPropagation.HeaderName` header (`tenantry-tenant-id`).
+The tenant's id is carried in the `TenantPropagation.HeaderName` header (`tenantry-tenant-id`). The handlers trust
+the header as it is: only let producers you control send to these queues, or check in the handler that the tenant
+may send the message.
 
 | Scenario | Outgoing (send/publish) | Incoming (handle) |
 |----------|-------------------------|-------------------|
 | A tenant is current | Header added | The handlers run as that tenant |
 | No tenant is current | No header | `OnMissingTenant` applies (default `Warn`: the handlers run without a tenant, and a warning is logged) |
 | The header names a tenant not in the store, or is not a valid id | — | `OnUnresolvedTenant` applies (default `Reject`: the message fails) |
-| Tenant is in the store but suspended by your app | Header added | The handlers run as that tenant: Tenantry does not check status, so [your handler must check](background-jobs.md#suspended-tenants) |
+| Tenant that `ValidateTenantActivity` refuses | Header added | As a tenant the store does not have: `OnUnresolvedTenant` applies ([Suspended tenants](background-jobs.md#suspended-tenants)) |
 | Message sent with a tenant in its headers (`WithTenant`) | Header kept | The handlers run as that tenant, whichever tenant was current when it was sent |
 
 While the handlers run as their tenant, their logs carry a `TenantId` scope, and the trace span they run in, if

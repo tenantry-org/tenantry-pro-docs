@@ -16,7 +16,7 @@ public sealed class MixedModeOptions<TKey> where TKey : IEquatable<TKey>, IParsa
 
 ### `GetIsolation`
 
-Returns where a tenant's data lives. It is called often, so it must be fast, and it must give the same answer for a tenant each time: compute it from the descriptor (its id, or a tier your store sets).
+Returns where a tenant's data lives. It is called often, so it must be fast, and it must give the same answer for a tenant each time: compute it from something fixed when the tenant is created (its id, or a flag your store sets then), not from its plan. Tenantry does not move a tenant's data.
 
 ```csharp
 public Func<ITenantDescriptor<TKey>, TenantIsolation>? GetIsolation { get; set; }

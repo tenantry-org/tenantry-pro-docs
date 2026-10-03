@@ -1,9 +1,7 @@
 # Database per tenant
 
-Each tenant gets a dedicated database. Reads and writes are physically isolated — a tenant's queries
-run against its own database, so there is no shared table and no row-level filter to leak across.
-This is the strongest isolation Tenantry offers, and the natural fit when tenants have very
-different data volumes, compliance boundaries, or backup/restore needs.
+Each tenant gets a database of its own. A tenant's queries run against its own database, so there is no shared table
+and no row filter to get wrong. Use it when tenants must be backed up, restored or placed apart.
 
 ## What Tenantry provides
 
@@ -47,9 +45,8 @@ builder.Services.AddTenantry<string>(tenant =>
 The `GetConnectionString` delegate receives the resolved `ITenantDescriptor<TKey>` — use
 `t.TenantId`, `t.Name`, or your own tenant type's properties with `t.As<AppTenant>()`
 ([your own tenant type](https://github.com/tenantry-org/tenantry-core/blob/master/docs/core-concepts.md#your-own-tenant-type)). It is called when each
-`DbContext` is created (i.e. per request), so it must be **fast and deterministic**: compute the
-string from tenant properties; do not call external services inside it. For external lookups, use the
-async delegate and caching (below).
+`DbContext` is created, unless caching is on, so it must be fast and deterministic: compute the string from the
+tenant's properties, and use the async delegate and caching (below) for external lookups.
 
 ## Resolving connection strings
 
@@ -84,8 +81,9 @@ builder.Services.AddTenantry<string>(tenant => tenant
     .UsePro(pro => pro.CacheConnectionStrings(o => o.Duration = TimeSpan.FromMinutes(30))));
 ```
 
-If both delegates are set, `GetAsync` prefers the async one. If **only** the async delegate is
-configured, the synchronous `Get()` throws — call `GetAsync` in that case.
+If both delegates are set, `GetAsync` prefers the async one. With only the async delegate, the synchronous `Get()`
+throws, and the scoped context reads its connection string when it first opens a connection, so only asynchronous
+EF Core calls (`ToListAsync`, `SaveChangesAsync`) work on it.
 
 ## Caching
 
@@ -93,20 +91,17 @@ configured, the synchronous `Get()` throws — call `GetAsync` in that case.
 default), so the delegates run once per tenant per period instead of for every context. Use it whenever reading
 a connection string is expensive (an external lookup).
 
-- It wraps the tenants' `ITenantConnectionStringProvider<TKey>`: the one `UseConnectionStrings` registers, called
-  before or after `UsePro`, or one of your own registered before `UsePro`. Everything that reads connection strings
-  is then cached: `AddDbContextPerTenantDatabase`, `CurrentTenantConnectionString`, provisioning, migrations and
-  health checks. The application fails to start if there are no connection strings to cache. A provider registered
-  after `UsePro` (a test's replacement, say) takes the cache's place, unless it wraps it, as a decorator does; a
-  warning at startup says so.
-- When a tenant's connection details change, inject `IConnectionStringCache<TKey>` and call
-  `Invalidate(tenantId)`, or `InvalidateAll()` after rotating every tenant's credentials. A connection string
+- It wraps the connection-string provider that `UseConnectionStrings` registers (before or after `UsePro`), or one
+  you register before `UsePro`, so every reader is cached. With no provider the application does not start. A
+  provider registered after `UsePro` replaces the cache, and a warning at startup says so.
+- When a tenant's connection details change, invalidate the tenant with Tenantry core's
+  `ITenantInvalidator<TKey>.InvalidateAsync(tenantId)`, which clears its connection string with everything else Tenantry
+  keeps for it, or only its connection string with `IConnectionStringCache<TKey>.Invalidate(tenantId)`.
+  Their `InvalidateAllAsync()` and `InvalidateAll()` clear every tenant's, after rotating every tenant's credentials. A connection string
   read while you invalidate is not cached.
 - `Duration` must be positive, or the application does not start. `TimeSpan.MaxValue` caches until you invalidate.
 - Caching does not change which reads work: with only `GetConnectionStringAsync`, `Get()` throws even when the
   cache holds the tenant's connection string.
-
-Cached connection strings live in the application's memory, like any other configuration it has read.
 
 ## DbContext pooling
 
@@ -127,16 +122,12 @@ builder.Services.AddTenantry<string>(tenant => tenant
 - It registers a scoped `AppDbContext` and `IDbContextFactory<AppDbContext>`, and applies `UseTenantry()`.
   Use it instead of `AddDbContext`, `AddDbContextPool` or `AddPooledDbContextFactory` for that context.
 - Creating a context without a current tenant throws `TenantNotResolvedException`.
-- Before a context opens a connection, and again before every command it runs, a guard checks that the
-  connection was set for this context (and lease) and belongs to the tenant that is current now. A context kept
-  and used after switching to another tenant, or whose connection or connection string your code replaced,
-  throws `TenantIsolationViolationException` instead of touching the wrong database. That includes a context
-  whose connection is still open, whether you opened it or a transaction did. The EF Core integration guide in
-  Tenantry.Core lists what the guard cannot see.
+- A guard refuses a context used under a tenant other than the one it was connected for
+  ([EF Core integration](https://github.com/tenantry-org/tenantry-core/blob/master/docs/efcore-integration.md) in
+  Tenantry core).
 - A pooled context needs a constructor that takes only its options.
-- The scoped context resolves the connection string synchronously, so it needs `GetConnectionString`.
-  With only `GetConnectionStringAsync`, create contexts with
-  `IDbContextFactory<AppDbContext>.CreateDbContextAsync()`. Caching applies either way.
+- With only `GetConnectionStringAsync`, the scoped context works with asynchronous EF Core calls only (above), and
+  `IDbContextFactory<AppDbContext>.CreateDbContextAsync()` reads the string up front. Caching applies either way.
 
 Core tests it with one pooled instance serving two tenant databases in turn, and with concurrent leases,
 on SQLite, SQL Server, PostgreSQL and MySQL.
@@ -194,6 +185,10 @@ create (`GRANT … ON ALL TABLES IN SCHEMA` and `… ON ALL SEQUENCES IN SCHEMA`
 the tables later migrations add); on MySQL a `GRANT` on the new database. A provisioning step of your own
 (`pro.AddProvisioningStep<T>()`) can do this: your steps run after the database is created and migrated.
 
+To drop the tenant's database when it leaves, add `pro.AddDatabaseDeprovisioning<TContext>()` and call
+`ITenantDeprovisioner<TKey>`: it refuses a database another tenant's context connects to. See
+[Offboarding a tenant](tenant-lifecycle.md#offboarding-a-tenant).
+
 ## Migrating tenant databases
 
 Use `pro.AddMigrations<TContext>()` to apply EF Core migrations to every tenant database, through the context
@@ -206,7 +201,7 @@ tenant's database when it is provisioned. See [Tenant migrations](migration-orch
 - The `GetConnectionString` delegate must be deterministic and fast; use `GetConnectionStringAsync` +
   caching for anything that hits the network.
 - Provisioning and migration are explicit (or opt-in at startup) — never implicit on first request.
-- Provisioning needs a relational EF Core provider; SQL Server, PostgreSQL and MySQL/MariaDB are tested
+- Provisioning needs a relational EF Core provider; SQL Server 2022, PostgreSQL 16 and MySQL 8.4 are tested
   ([Database providers](database-providers.md)).
 
 ## See also

@@ -31,7 +31,9 @@ builder.Services
             .AddDatabaseProvisioning<AppDbContext>()
             // Tenant database migrations. They run as a separate deployment step (dotnet run -- migrate-tenants,
             // below), not at startup: with several instances, every one would otherwise migrate every tenant at once.
-            .AddMigrations<AppDbContext>());
+            // A run does not create a missing database (provisioning does), except in development, where the
+            // demo tenants' databases do not exist yet.
+            .AddMigrations<AppDbContext>(o => o.CreateMissingDatabases = builder.Environment.IsDevelopment()));
 
         // Each AppDbContext connects to the current tenant's database.
         tenant.AddDbContextPerTenantDatabase<AppDbContext>((_, opts) => opts.UseMySQL());

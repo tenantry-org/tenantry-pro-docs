@@ -58,10 +58,11 @@ example `ITenantMigrationRunner.GetStatusAsync` reports applied and pending migr
 
 ## When your subscription ends
 
-Your key keeps validating, so the versions of Pro you already have keep working. You lose access to the
-private package feed, so restores from it fail, for the versions you have as for later ones: keep copies of the
-packages you build with, in an internal feed or a local package folder (see [Installation](installation.md#when-your-subscription-ends)). If you
-subscribe again, your Pro access page shows a new key.
+Your key keeps validating, so the versions of Pro you already have keep working. Security fixes are released as a
+patch to every affected minor version. Today's GitHub feed stops restoring every version when access ends, so keep
+copies of the packages you build with ([Installation](installation.md#when-your-subscription-ends)). The private
+Tenantry feed that replaces it before Pro goes on sale will let you restore the versions released while you
+subscribed. If you subscribe again, your Pro access page shows a new key.
 
 ## Reference
 

@@ -18,7 +18,7 @@ Implements `IEquatable<MigrationResult<TKey>>`.
 
 ### `AppliedMigrations`
 
-The migrations this run applied, in the order they were applied. Empty when there was nothing to apply.
+The migrations whose history row this run committed, in order; empty when there was nothing to apply. A migration another process applied is never listed. After a failure it lists those committed before it, which depends on the EF Core version and database (the Tenant migrations guide's failure model); check with [`TenantMigrationRunnerExtensions.GetTenantStatusAsync<TKey>`](tenantry-pro-efcore-tenantmigrationrunnerextensions.md).
 
 ```csharp
 public required IReadOnlyList<string> AppliedMigrations { get; init; }
@@ -26,7 +26,15 @@ public required IReadOnlyList<string> AppliedMigrations { get; init; }
 
 Value: `IReadOnlyList<string>`
 
-A migration counts when this run wrote its row in the migration history and the row was committed (or written outside a transaction, for a migration whose operations suppress it). So a migration another process applied is not listed, whether this run waited for it (EF Core's migration lock), failed on it, or skipped it when an execution strategy retried the run. When the run failed, this lists the migrations it committed before the failure, if any: EF Core 8 and 10+ commit each migration separately, while EF Core 9 commits them together, so on SQL Server and PostgreSQL a failure usually leaves none. MySQL commits each DDL statement itself, so earlier migrations stay applied on every EF Core version; on EF Core 9 this list cannot show them. The migration that failed is never listed, although on MySQL it can leave some of its own changes in place. Check the database with [`ITenantMigrationRunner<TKey>.GetTenantStatusAsync`](tenantry-pro-efcore-itenantmigrationrunner.md) after a failure.
+### `Attempted`
+
+Whether the run tried to migrate this database or schema. [false](https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool) when it stopped first: [`MigrationRunOptions<TKey>.MaxFailures`](tenantry-pro-efcore-migrationrunoptions.md) were reached, or `migrate-tenants` was asked to stop. Its migrations were not touched, and [`MigrationResult<TKey>.Error`](tenantry-pro-efcore-migrationresult.md) is [null](https://learn.microsoft.com/dotnet/csharp/language-reference/keywords/null).
+
+```csharp
+public bool Attempted { get; init; }
+```
+
+Value: `bool`
 
 ### `ContextType`
 
@@ -40,7 +48,7 @@ Value: `Type`
 
 ### `Database`
 
-The database's name, as the context's connection gives it, or [null](https://learn.microsoft.com/dotnet/csharp/language-reference/keywords/null) when the context could not be created for the tenant (then [`MigrationResult<TKey>.Error`](tenantry-pro-efcore-migrationresult.md) says why).
+The database's name, as the context's connection gives it, or [null](https://learn.microsoft.com/dotnet/csharp/language-reference/keywords/null) when the context could not be created for the tenant (then [`MigrationResult<TKey>.Error`](tenantry-pro-efcore-migrationresult.md) says why), or was not created because the run had stopped (then the result names one tenant and is not [`MigrationResult<TKey>.Attempted`](tenantry-pro-efcore-migrationresult.md)).
 
 ```csharp
 public string? Database { get; init; }
@@ -80,7 +88,7 @@ Value: `string`
 
 ### `Succeeded`
 
-Whether the migrations were applied without error.
+Whether the migrations were applied without error. [false](https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool) for one the run did not attempt ([`MigrationResult<TKey>.Attempted`](tenantry-pro-efcore-migrationresult.md)).
 
 ```csharp
 public required bool Succeeded { get; init; }
@@ -90,7 +98,7 @@ Value: `bool`
 
 ### `TenantIds`
 
-The tenants whose data is in this database or schema, in the tenant store's order. Tenants that share one (a shared database, or one schema for several tenants) share a result: the migrations were applied once for all of them.
+The tenants whose data is in this database or schema, in the tenant store's order, whether or not the run named them all. Tenants that share one (a shared database, or one schema for several tenants) share a result: the migrations were applied once for all of them.
 
 ```csharp
 public required IReadOnlyList<TKey> TenantIds { get; init; }

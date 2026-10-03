@@ -5,11 +5,9 @@ connectivity, the other reports pending EF Core migrations. Both go through your
 tenant's scope as your application creates it, read each database (or schema) once however many tenants share it,
 and report per-tenant detail in the health check data dictionary.
 
-> **For monitoring, not for liveness or readiness probes.** One unreachable tenant database makes the
-> connectivity check fail. Every replica checks the same databases, so a probe that fails on these checks fails on
-> every replica at once and takes the whole application out of service for all tenants. The checks report
-> Degraded by default, which ASP.NET Core answers with `200`. Serve them on a separate, protected endpoint
-> for your monitoring system (see [Exposing the checks](#exposing-the-checks)).
+> **For monitoring, not liveness or readiness.** One unreachable tenant database fails the check on every replica
+> at once. The checks report Degraded, which ASP.NET Core returns as `200`, so map Degraded to `503` on a separate,
+> protected endpoint ([below](#exposing-the-checks)).
 
 ## Registration
 
@@ -22,8 +20,7 @@ builder.Services.AddHealthChecks()
     .AddTenantMigrationCheck<AppDbContext>();    // every tenant database or schema has every migration applied
 ```
 
-The checks need Tenantry.Pro (`UsePro` in `AddTenantry`); without it they report their failure status, saying so.
-They get the context from each tenant's scope, as a request does (or from its `IDbContextFactory<TContext>` when it
+The checks need Tenantry (`AddTenantry`); without it they report their failure status, saying so. They get the context from each tenant's scope, as a request does (or from its `IDbContextFactory<TContext>` when it
 cannot be created there; see [Tenant migrations](migration-orchestration.md#registration)), so register it so that a
 tenant's scope gives the tenant's own database: Tenantry core's `AddDbContextPerTenantDatabase`, or a context with
 `UseTenantry()` and schema per tenant. Both take the standard health check arguments, and options:
@@ -60,7 +57,7 @@ whose context cannot be created, because its connection string cannot be read, s
 ## Migration check
 
 `AddTenantMigrationCheck<TContext>` reads each tenant's pending migrations, once for each distinct database and
-schema, with the context the [migration runner](migration-orchestration.md) uses: as `pro.AddMigrations<TContext>()`
+schema (as the [migration runner](migration-orchestration.md#running-migrations) tells them apart), with the context the [migration runner](migration-orchestration.md) uses: as `pro.AddMigrations<TContext>()`
 creates it, if you called it, otherwise as your application registers it.
 
 | Condition | Status |
@@ -70,30 +67,19 @@ creates it, if you called it, otherwise as your application registers it.
 
 Each tenant's entry in the data is `up to date`, the number and names of its pending migrations, or `error:` and why
 they could not be read. The check is named `tenant-migrations` and tagged `tenantry` and `migrations` by default.
-Because it reads EF Core migration metadata, it uses reflection and is annotated
-`[RequiresDynamicCode]`/`[RequiresUnreferencedCode]`: expect the AOT and trimming analyzers to flag it.
-
-With ASP.NET Core's defaults, Healthy and Degraded respond `200` and Unhealthy responds `503`, so a
-monitor that reads only the status code sees neither pending migrations nor unreachable tenant databases.
-Read the response body, or map Degraded to `503` on the monitoring endpoint (below).
 
 ## What the checks cover
 
-- **Every tenant the store lists**, including tenants that are suspended or still provisioning (the store
-  must list them; see [Tenant lifecycle](tenant-lifecycle.md#when-provisioning-fails)). A tenant whose
-  database does not exist yet shows as unreachable in the connectivity check, and with every migration
-  pending in the migration check. Keep suspended tenants' databases online (see
-  [Tenant migrations](migration-orchestration.md#running-migrations)), or every check reports them.
+- **Every tenant the store lists**, suspended or still provisioning ones included
+  ([why](migration-orchestration.md#which-tenants-are-migrated)). A tenant whose database does not exist yet shows as
+  unreachable, with every migration pending.
 - **How often they read the databases.** Each check keeps its result for `CacheDuration` (30 seconds by default),
   and polls that arrive while it runs wait for that run, so a monitor polling every few seconds does not reach every
   tenant database each time. Set it to zero to check on every request.
 - **How long a check takes.** Each check reads the first tenant's database alone, then up to `MaxConcurrency` at a
-  time, and waits up to `DatabaseTimeout` for each (some EF Core providers set up shared state the first time a
-  context is used, without a lock, so one context is created before any other). With every database unreachable a
-  check takes about (1 + (databases − 1) ÷ `MaxConcurrency`) × `DatabaseTimeout`; the check's `timeout` (30 seconds
-  by default) ends it sooner, and reports it as failed. The two
-  checks run at the same time, so a request takes about as long as the slower one. Allow for your tenant count in
-  the monitor's timeout.
+  time, and waits up to `DatabaseTimeout` for each. With every database unreachable a check takes about
+  (1 + (databases − 1) ÷ `MaxConcurrency`) × `DatabaseTimeout`; the check's `timeout` (30 seconds by default) ends it
+  sooner, as a failure. The two checks run at once. Allow for your tenant count in the monitor's timeout.
 
 ## Exposing the checks
 
@@ -150,6 +136,5 @@ instance would otherwise probe every tenant database.
 
 ## See also
 
-- [Database per tenant](database-per-tenant.md) — the per-tenant context these checks use.
-- [Tenant migrations](migration-orchestration.md) — the same pending-migration information, plus the ability to apply it.
-- [Tenant stores](https://github.com/tenantry-org/tenantry-core/blob/master/docs/tenant-stores.md#suspended-and-inactive-tenants) (Tenantry core) — why the store lists suspended tenants.
+- [Database per tenant](database-per-tenant.md): the per-tenant context these checks use.
+- [Tenant migrations](migration-orchestration.md): the same pending migrations, and applying them.

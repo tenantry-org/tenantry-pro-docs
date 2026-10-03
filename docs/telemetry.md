@@ -24,8 +24,8 @@ its tenant is known, so it is not tagged.
 
 ## Setting it up
 
-Add tenant metrics on the Pro builder, then add the middleware **after** `UseTenantry()`, which makes the
-tenant current:
+Add tenant metrics on the Pro builder. The tag is added when `app.UseTenantry()` resolves the request's tenant, so
+nothing else goes in the pipeline, and an `OnResolved` handler of your own still runs:
 
 ```csharp
 builder.Services.AddTenantry<string>(tenant =>
@@ -35,11 +35,6 @@ builder.Services.AddTenantry<string>(tenant =>
 
     tenant.UsePro(pro => pro.AddTenantMetrics());
 });
-
-var app = builder.Build();
-
-app.UseTenantry();
-app.UseTenantryMetrics();   // after UseTenantry()
 ```
 
 ## Collecting the metrics
@@ -113,8 +108,14 @@ message that runs without a tenant gets neither.
 ## Log event ids
 
 Each of Tenantry.Pro's log messages has an event id that does not change between versions, so you can alert on it.
-Alert above all on the licence errors (30xx: Tenantry.Pro's features stop working), on 4103 and 4113 (migration runs
-with failures, each of which is also logged as 4105 or 4106) and on 4302 (audit entries that were lost). Tenantry Core's are 1xxx and 2xxx (see its diagnostics).
+Tenantry Core's are 1xxx and 2xxx (see its diagnostics). Alert on these:
+
+- 30xx: licence errors (Tenantry.Pro's features stop working)
+- 3104, 3108: a provisioning or offboarding step failed
+- 4103, 4113: a migration run had failures (each is also logged as 4105 or 4106)
+- 4114: a migration run stopped early
+- 4116: `migrate-tenants` could not start
+- 4302: audit entries were lost
 
 | Event id | Name | Level | When |
 |----------|------|-------|------|
@@ -133,8 +134,13 @@ with failures, each of which is also logged as 4105 or 4106) and on 4302 (audit 
 | 3102 | `ProvisioningStepRunning` | Information | A provisioning step starts for a tenant. |
 | 3103 | `ProvisioningStepSkipped` | Debug | A provisioning step does not apply to a tenant. |
 | 3104 | `ProvisioningStepFailed` | Error | A provisioning step failed for a tenant. |
+| 3105 | `TenantDeprovisioned` | Information | A tenant was deprovisioned (offboarded). |
+| 3106 | `DeprovisioningStepRunning` | Information | A deprovisioning step starts for a tenant. |
+| 3107 | `DeprovisioningStepSkipped` | Debug | A deprovisioning step does not apply to a tenant. |
+| 3108 | `DeprovisioningStepFailed` | Error | A deprovisioning step failed for a tenant; the steps after it did not run. |
 | 3201 | `TenantWorkFailed` | Error | A `TenantBackgroundService`'s work failed for a tenant; the other tenants go on. |
 | 3202 | `SweepFailed` | Error | A `PeriodicTenantBackgroundService`'s sweep failed; the next one runs on schedule. |
+| 3203 | `InactiveTenantSkipped` | Debug | Background work or a for-each-tenant schedule skips a tenant `ValidateTenantActivity` refuses. |
 | 3301 | `ConnectionStringCacheBypassed` | Warning | `CacheConnectionStrings` was called, but a connection string provider registered after `UsePro` replaced the cache. |
 | 3401 | `JobWithoutTenantRunning` | Warning | A job or message carries no tenant and runs without one (`OnMissingTenant` is Warn). |
 | 3402 | `JobWithoutTenantSkipped` | Warning | A job or message carries no tenant and is skipped (`OnMissingTenant` is Skip). |
@@ -142,10 +148,15 @@ with failures, each of which is also logged as 4105 or 4106) and on 4302 (audit 
 | 3404 | `JobWithInvalidTenantSkipped` | Warning | A job or message carries an invalid tenant id and is skipped (`OnUnresolvedTenant` is Skip). |
 | 3405 | `JobWithUnknownTenantRunning` | Warning | A job or message carries a tenant the store does not have and runs without a tenant (`OnUnresolvedTenant` is Warn). |
 | 3406 | `JobWithUnknownTenantSkipped` | Warning | A job or message carries a tenant the store does not have and is skipped (`OnUnresolvedTenant` is Skip). |
+| 3407 | `JobWithInactiveTenantRunning` | Warning | A job or message carries a tenant that is not active and runs without a tenant (`OnUnresolvedTenant` is Warn). |
+| 3408 | `JobWithInactiveTenantSkipped` | Warning | A job or message carries a tenant that is not active and is skipped (`OnUnresolvedTenant` is Skip). |
 | 4001 | `TenantDatabaseExists` | Debug | A tenant's database already exists, so provisioning does not create it. |
 | 4002 | `TenantDatabaseCreatedElsewhere` | Warning | Creating a tenant's database failed, but it exists: probably another provisioning run created it. |
 | 4003 | `TenantDatabaseCreated` | Information | A tenant's database was created. |
 | 4004 | `TenantSchemaInPlace` | Information | A tenant's schema exists, created or already there. |
+| 4005 | `TenantDatabaseDropped` | Information | A tenant's database was dropped (`AddDatabaseDeprovisioning`). |
+| 4006 | `TenantSchemaDropped` | Information | A tenant's schema was dropped (`AddSchemaDeprovisioning`). |
+| 4007 | `TenantSharedDataDeleted` | Information | A tenant's rows were deleted from the shared database (`AddSharedDataDeletion`). |
 | 4101 | `MigrationRunStarting` | Information | `MigrateAllAsync` starts. |
 | 4102 | `MigrationRunCompleted` | Information | A migration run completed with no failures. |
 | 4103 | `MigrationRunCompletedWithFailures` | Warning | A migration run completed, and some databases or schemas failed (each failure is logged as 4105 or 4106). |
@@ -159,6 +170,10 @@ with failures, each of which is also logged as 4105 or 4106) and on 4302 (audit 
 | 4111 | `StartupMigrationsStarting` | Information | Migrations at startup begin. |
 | 4112 | `StartupMigrationsCompleted` | Information | Migrations at startup completed with no failures. |
 | 4113 | `StartupMigrationsFailed` | Warning | Migrations at startup failed for some databases or schemas. |
+| 4114 | `MigrationRunStopped` | Warning | A migration run stopped before attempting every database or schema: `MaxFailures` (`--max-failures`) was reached, or `migrate-tenants` was asked to stop. |
+| 4115 | `MigrationRunStopping` | Warning | `migrate-tenants` got SIGTERM or Ctrl+C: the databases or schemas in progress finish, and no other starts. |
+| 4116 | `MigrationRunNotStarted` | Error | `migrate-tenants` could not start: invalid arguments, no valid licence, a tenant the store does not have, or a tenant store that cannot be read. |
+| 4117 | `AppliedMigrationsNotRecorded` | Warning | EF Core's diagnostic events cannot be observed for a context, so its results list the migrations pending before the run as applied. Logged once per context. |
 | 4201 | `TenantDatabaseUnreachable` | Warning | The database health check could not reach a tenant's database. |
 | 4202 | `DatabaseHealthCheckContextNotCreated` | Warning | The database health check could not create a context for a tenant. |
 | 4301 | `AuditEntry` | Information | The logging audit store writes an audit entry. |

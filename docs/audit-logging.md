@@ -80,11 +80,8 @@ public sealed class HttpAuditContextProvider(IHttpContextAccessor http) : IAudit
 }
 ```
 
-`Data` holds values of your own, recorded with each entry. The provider is resolved from the saving context's scope,
-as the store is, so a scoped one can take scoped services, such as a current-user service of your own. A context
-with no scope of its own (pooled, or from an `IDbContextFactory`) gets the provider from a scope created for the
-save, where scoped services are new: read ambient state, as above, instead. A provider that throws stops the save
-before anything is sent.
+`Data` holds values of your own, recorded with each entry. A provider that throws stops the save before anything is
+sent. For where it is resolved, see [Where the store and provider come from](#where-the-store-and-provider-come-from).
 
 ## Leaving things out
 
@@ -122,15 +119,12 @@ By default (`AuditTiming.AfterCommit`), the store gets a save's entries once its
   `Database.UseTransaction`: when `SaveChanges` completes, as Tenantry cannot see when that transaction commits. The
   store runs while it is still open, and the entries stay written if it rolls back.
 
-Apart from that last case, the changes are in the database by then, so by default a store failure is logged as an
-error and the save, or the commit, succeeds. For the same reason the entries are written even if the save's
-cancellation token is cancelled: the store gets a token that is never cancelled.
-
-To have the failure reach your code instead, set `o.OnStoreFailure = AuditStoreFailureBehavior.Throw`. `SaveChanges`,
-or the commit, then throws an `AuditStoreException` once every entry it could write is written, with the entries that
-were not in `Entries` and the store's exception inside. **The changes are saved all the same**, so do not save them
-again: write the entries somewhere else, or retry the store. The completion of a `TransactionScope`, or of a
-transaction the connection was enlisted in, cannot throw it, so there a failure is still logged.
+**When the store fails.** The changes are in the database by then (apart from that last case), so by default the
+failure is logged as an error and the save, or the commit, succeeds; the store's token is never cancelled, for the
+same reason. Set `o.OnStoreFailure = AuditStoreFailureBehavior.Throw` to have `SaveChanges`, or the commit, throw an
+`AuditStoreException` instead, with the unwritten entries in `Entries`. The changes are saved all the same, so do not
+save them again: write the entries somewhere else, or retry the store. A `TransactionScope`'s completion cannot throw
+it, so there the failure is still logged.
 
 ```csharp
 using Tenantry.Pro.EfCore;
@@ -198,10 +192,8 @@ The default store logs each audit entry as a structured `Information` log messag
 To persist entries to a database, event stream, or external audit service, implement
 `IAuditStore` and register it after `pro.AddAuditLogging()`.
 
-The store is resolved for each call from the scope of the context being saved (with
-`AddDbContext`, or `AddDbContextPerTenantDatabase` without a pool, the scope the context was created in), so a
-store can be **scoped** and take scoped services, such as a `DbContext` of its own. If that scope has been disposed
-by the time the transaction commits, the store comes from a scope created for the call:
+It can be scoped and take scoped services, such as a `DbContext` of its own
+([Where the store and provider come from](#where-the-store-and-provider-come-from)):
 
 ```csharp
 builder.Services.AddDbContext<AuditDbContext>(options =>
@@ -238,15 +230,11 @@ public sealed class MyDatabaseAuditStore(AuditDbContext db) : IAuditStore
 ```
 
 `context` is the context that saved the changes. They are committed by the time this store is called, so do not
-save through it. When a transaction commits after the context was disposed, as a `TransactionScope` may, or after a
-pooled context went back to its pool, possibly to serve another tenant, read nothing from it but its type. The saves
-the store makes are not audited, even through a context that uses `UseTenantry()`.
+save through it. When a transaction commits after the context was disposed, or after a pooled context went back to
+its pool, possibly to serve another tenant, read nothing from it but its type. The saves the store makes are not
+audited, even through a context that uses `UseTenantry()`.
 
-A context with no scope of its own — pooled (`AddDbContextPool`, `AddDbContextPerTenantDatabase` with a pool), from
-an `IDbContextFactory` (`AddDbContextFactory`, `AddPooledDbContextFactory`), or created outside dependency
-injection — gets a scope
-created for each call, so the same scoped store works there too, and a transient store is disposed after the
-call. A singleton store that creates a context per call also works anywhere:
+A singleton store that creates a context per call works too:
 
 ```csharp
 builder.Services.AddDbContextFactory<AuditDbContext>(options =>
@@ -269,6 +257,13 @@ public sealed class FactoryAuditStore(IDbContextFactory<AuditDbContext> contexts
     }
 }
 ```
+
+## Where the store and provider come from
+
+Both are resolved for each save from the saving context's scope, so they can be scoped. A context without a scope of
+its own (pooled, from an `IDbContextFactory`, or created by hand), or whose scope is gone by the time its transaction
+commits, gets a new scope for the call, where scoped services are new: read ambient state, such as
+`IHttpContextAccessor`, there. A transient store is disposed after each call.
 
 ## AuditEntry reference
 
@@ -302,8 +297,8 @@ null records, as its old values, its properties' defaults or an empty collection
   wait for the store, whose `SaveAsync` is asynchronous: prefer `SaveChangesAsync`. Use `ConfigureAwait(false)` in
   the store, so it does not need the caller's synchronization context: a scope completing on a UI thread (WPF,
   WinForms, MAUI) would otherwise wait for ever.
-- EF Core's `ChangeTracker` uses reflection; audit logging is not AOT or trim compatible.
-  The analyzer will warn at build time — this is expected for migration and audit features.
+- Audit logging is not trim- or Native AOT-compatible
+  ([Troubleshooting](troubleshooting.md#trimaot-analyzer-warnings-il2026-il3050)).
 
 ## See also
 

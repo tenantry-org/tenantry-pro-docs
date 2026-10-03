@@ -22,7 +22,8 @@ builder.Services
 
         // Schema per tenant: one shared SQL Server database, one schema per tenant.
         tenant.UsePro(pro => pro
-            // Every context that uses UseTenantry() gets the current tenant's schema: here, its id.
+            // The context that uses UseTenantry() gets the current tenant's schema: here, its id. With more than one,
+            // list those that get it in opts.Contexts.
             .UseSchemaPerTenant(opts => opts.GetSchemaName = t => t.TenantId)
             // Tenant provisioning: create the tenant's schema (CreateSchema), then apply the migrations in Migrations/
             // to it (Migrations), with a migration history of its own. To migrate every tenant's schema after a

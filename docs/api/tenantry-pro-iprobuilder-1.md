@@ -16,6 +16,22 @@ public interface IProBuilder<TKey> : IProBuilder where TKey : IEquatable<TKey>, 
 
 ## Methods
 
+### `AddDeprovisioningStep<TStep>()`
+
+Adds `TStep` to offboarding ([`ITenantDeprovisioner<TKey>`](tenantry-pro-itenantdeprovisioner.md)), after the steps already added and before anything Tenantry drops or deletes. Registers it as a scoped service, unless it is already registered.
+
+```csharp
+IProBuilder<TKey> AddDeprovisioningStep<TStep>() where TStep : class, ITenantDeprovisioningStep<TKey>
+```
+
+Type parameters:
+
+- `TStep`: The step: export, archive or notify.
+
+Returns: [`IProBuilder<TKey>`](tenantry-pro-iprobuilder-1.md): The same builder for chaining.
+
+Adding the same step again has no effect.
+
 ### `AddProvisioningStep<TStep>()`
 
 Adds `TStep` to tenant provisioning ([`ITenantProvisioner<TKey>`](tenantry-pro-itenantprovisioner.md)), after the steps and seeders already added. Registers it as a scoped service, unless it is already registered.

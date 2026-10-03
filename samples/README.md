@@ -1,6 +1,6 @@
 # Tenantry.Pro samples
 
-Runnable samples for Tenantry.Pro 0.5.0 (on Tenantry Core 0.5.0), referenced from the
+Runnable samples for Tenantry.Pro 0.6.0 (on Tenantry Core 0.6.0), referenced from the
 [documentation](https://tenantry.dev/docs/pro). They restore Tenantry.Pro from the private package feed, so
 set up your credentials first: see [Installation](https://tenantry.dev/docs/pro/installation).
 

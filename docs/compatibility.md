@@ -14,9 +14,9 @@ dependencies are declared.
 
 The packages target **net8.0, net9.0 and net10.0**; net11.0 is added when .NET 11 is released.
 
-**Legacy** means the net8.0 and net9.0 builds are still shipped, built and tested, but Microsoft stops
-patching .NET 8 and .NET 9, including EF Core 8 and 9, on 10 November 2026. Move to .NET 10.
-They stay through the beta: 1.0 ends it, not before 10 November 2027, and drops them.
+**Legacy**: the net8.0 and net9.0 builds still ship and are tested, but Microsoft stops patching .NET 8 and 9 (and
+EF Core 8 and 9) on 10 November 2026, so move to .NET 10. Tenantry.Pro 1.0, released no earlier than 10 November
+2027, drops them.
 
 ## Tenantry Core
 
@@ -25,9 +25,9 @@ Tenantry.Pro 0.5 on Tenantry Core from the version it is tested against up to, b
 a Core minor release may break Pro, so a new Core minor comes with a new Tenantry.Pro minor. See
 [Tenantry Core's compatibility](https://github.com/tenantry-org/tenantry-core/blob/master/docs/compatibility.md).
 
-`Tenantry.Pro.EfCore` and the Hangfire, MassTransit, Quartz.NET and Rebus packages use `Tenantry.Pro`'s internals,
-so each depends on exactly its own release of it; `Tenantry.Pro.AspNetCore` takes `Tenantry.Pro` up to the next
-minor. Update the packages together.
+`Tenantry.Pro.EfCore` uses `Tenantry.Pro`'s internals, so it depends on exactly its own release of it.
+`Tenantry.Pro.AspNetCore` and the Hangfire, MassTransit, Quartz.NET and Rebus packages use only its public API, so
+each takes `Tenantry.Pro` from its own release up to the next minor. Update the packages together.
 
 ## EF Core and databases
 

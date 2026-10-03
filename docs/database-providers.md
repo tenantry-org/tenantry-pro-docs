@@ -27,8 +27,8 @@ dotnet add package Tenantry.Pro.EfCore
 dotnet add package Microsoft.EntityFrameworkCore.SqlServer
 ```
 
-Supports both strategies. Creating a database needs the `CREATE ANY DATABASE` permission (the `dbcreator`
-role), and creating a schema the `CREATE SCHEMA` permission in the shared database.
+Supports both strategies. Creating a database needs the `CREATE ANY DATABASE` permission or the `dbcreator` role,
+and creating a schema the `CREATE SCHEMA` permission in the shared database.
 
 ## PostgreSQL
 
@@ -51,11 +51,11 @@ dotnet add package MySql.EntityFrameworkCore           # EF Core 10 (.NET 10): O
 dotnet add package Pomelo.EntityFrameworkCore.MySql    # EF Core 8 or 9
 ```
 
-**Database-per-tenant only.** In MySQL a "schema" *is* a database — the two terms are synonyms — so
-there is no separate schema to isolate within a database. Use a database per tenant; schema provisioning
+**Database-per-tenant only.** In MySQL a "schema" is a database, so there is no schema to isolate within one. Use a database per tenant; schema provisioning
 fails with `NotSupportedException`. Creating a database needs the global `CREATE` privilege.
 
-**Choosing the EF Core provider.** Use the combinations that are tested (below):
+**Choosing the EF Core provider.** Use the combinations that are tested (below). MariaDB is not tested: Pomelo
+supports it on EF Core 8 and 9, and Oracle's provider does not.
 
 - **EF Core 8 or 9:** Pomelo, `options.UseMySql(cs, ServerVersion.AutoDetect(cs))`.
 - **EF Core 10 (.NET 10):** Oracle's `MySql.EntityFrameworkCore`, `options.UseMySQL(cs)`. Pomelo has no
@@ -66,18 +66,10 @@ Oracle's provider on EF Core 8 or 9, and either provider on EF Core 11 (.NET 11)
 
 ## Tested combinations
 
-The integration suites run against a real database in a container, on each target framework. Provisioning:
-creating tenants' databases through the application's context, again with nothing to do, eight runs for one
-tenant at once (all succeed, and the database is usable), and with a context of its own (`CreateContext`);
-on SQL Server and PostgreSQL also creating tenants' schemas (again, and four runs at once), schema per tenant
-end to end, and mixed mode; on MySQL, schema provisioning refused. Migrations, through the application's own
-context: migrating several tenant databases, a rerun that applies nothing, a tenant that fails (rejected
-credentials) while the others migrate and is then repaired and retried, and two runners migrating the same tenants
-at once, with one migration pending and with three; on SQL Server and PostgreSQL also each tenant's schema
-(provisioned, then the rest migrated by the runner, each with its own history table and EF Core 9+'s snapshot check
-passing) and mixed mode (a database, a schema and two tenants sharing the database, each migrated once, with both
-health checks). Recorded 29 September 2026; the three-migration case on 30 September 2026; provisioning, and
-migrations through the application's context, per schema and in mixed mode, on 1 October 2026.
+Each suite runs against a real database in a container, on every target framework. It covers provisioning (fresh,
+repeated, eight concurrent runs, and with `CreateContext`), schema provisioning, schema per tenant and mixed mode on
+SQL Server and PostgreSQL (refused on MySQL), and migrations (several tenants, a rerun, a failing tenant later
+repaired, and two concurrent runners). Last run: 1 October 2026.
 
 | Database | EF Core provider | .NET / EF Core | Result | Concurrent runners |
 |----------|------------------|----------------|--------|--------------------|

@@ -50,7 +50,8 @@ await scheduler.ScheduleJob(job, trigger);
 ```
 
 `WithTenant` stores the id as a string, formatted with the invariant culture, under `TenantPropagation.HeaderName`
-(`tenantry-tenant-id`). It can go in the job's data or in a trigger's, which wins for that trigger's runs.
+(`tenantry-tenant-id`). It can go in the job's data or in a trigger's, which wins for that trigger's runs. The job
+runs as whatever tenant its data names, so keep the job store writable only by your application.
 
 A job scheduled while a tenant is current does not carry it unless you call `WithTenant`, unlike in the other
 integrations: Quartz.NET has no point at which a job or trigger can be changed before the scheduler stores it (its
@@ -96,8 +97,8 @@ tenant's id. Each tenant's run executes, and can fail, on its own:
   counts it as an execution of the job: job listeners see it, as well as each tenant's run. If the store cannot be
   read, that firing fails, and the next one tries again.
 - A run whose data also names a tenant (`WithTenant`) runs as that tenant only.
-- It triggers a run for every tenant the store returns, so a job must check whether your application has
-  [suspended its tenant](background-jobs.md#suspended-tenants).
+- It triggers a run for every tenant the store returns that `ValidateTenantActivity` allows
+  ([Suspended tenants](background-jobs.md#suspended-tenants)).
 - A job marked `[DisallowConcurrentExecution]` runs for one tenant at a time.
 
 ## Behaviour
@@ -108,7 +109,7 @@ tenant's id. Each tenant's run executes, and can fail, on its own:
 | Job marked `ForEachTenant()`, firing without a tenant | The job is triggered once for each tenant, each run as its tenant ([A job for each tenant](#a-job-for-each-tenant)) |
 | Job scheduled without a tenant | `OnMissingTenant` applies (default `Warn`: the job runs without a tenant, and a warning is logged) |
 | The stored tenant is not in the store, or its id is not a valid id | `OnUnresolvedTenant` applies (default `Reject`: the run fails) |
-| Tenant is in the store but suspended by your app | The job runs as that tenant: Tenantry does not check status, so [your job must check](background-jobs.md#suspended-tenants) |
+| Tenant that `ValidateTenantActivity` refuses | As a tenant the store does not have: `OnUnresolvedTenant` applies ([Suspended tenants](background-jobs.md#suspended-tenants)) |
 
 While a job runs as its tenant, its logs carry a `TenantId` scope, and the trace span it runs in, if tracing
 records one, is tagged `tenant.id` ([Telemetry](telemetry.md#logs-and-traces)).

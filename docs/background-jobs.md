@@ -1,15 +1,10 @@
 # Background jobs & non-HTTP hosts
 
-In an ASP.NET Core request, `UseTenantry()` opens the tenant scope for you. A worker service, console
-app, scheduled job, or `IHostedService` has no request — so there is nothing to open the scope, and
-scoped tenant-aware services (your `DbContext`, repositories) have no tenant to bind to. Tenantry
-Core's `ITenantScopeFactory<TKey>` fills that gap: it creates a combined **DI scope + tenant scope** in
-one call.
-
-`ITenantScopeFactory<TKey>` and `ITenantLookup<TKey>` live in `Tenantry.Core` and are registered
-by `AddTenantry` (and therefore wherever you call `UsePro()`) — no extra configuration.
-Core's [non-HTTP hosts guide](https://github.com/tenantry-org/tenantry-core/blob/master/docs/non-http-hosts.md)
-covers them in full; this page shows how they fit with Pro.
+In an ASP.NET Core request, `UseTenantry()` makes the tenant current. A worker service, console app or hosted
+service has no request, so you do it yourself: Tenantry Core's `ITenantScopeFactory<TKey>` opens a DI scope with a
+current tenant. It and `ITenantLookup<TKey>` are registered by `AddTenantry`. Core's
+[non-HTTP hosts guide](https://github.com/tenantry-org/tenantry-core/blob/master/docs/non-http-hosts.md) covers them;
+this page shows how they fit with Pro.
 
 ## The factory
 
@@ -30,9 +25,8 @@ public interface ITenantScopeFactory<TKey>
 
 The returned `ITenantScope<TKey>` is an `IServiceScope` and `IAsyncDisposable`, and exposes:
 
-- `ServiceProvider` — a DI scope in which the tenant is active. Resolve your scoped services **from
-  here**.
-- `Tenant` — the active tenant descriptor.
+- `ServiceProvider`: a DI scope in which the tenant is current. Resolve your scoped services from it.
+- `Tenant`: the tenant.
 
 Disposing the scope, with `using` or `await using`, disposes its services while the tenant is still
 active and then restores whichever tenant was current before it. That holds in loops and when scopes
@@ -69,7 +63,8 @@ public sealed class NightlyRollupWorker(
 ```
 
 When you only have an id (a queue message, a CLI argument), let the factory look the tenant up and run
-the work inside its scope. It throws `TenantNotResolvedException` if the store has no such tenant:
+the work inside its scope. It throws `TenantNotFoundException` (a `TenantNotResolvedException`) if the store has no
+such tenant:
 
 ```csharp
 await scopeFactory.RunInScopeAsync(message.TenantId, async (scope, ct) =>
@@ -82,15 +77,12 @@ await scopeFactory.RunInScopeAsync(message.TenantId, async (scope, ct) =>
 
 ## Built-in "for every tenant" base classes
 
-The loop above — enumerate tenants, scope into each, isolate per-tenant failures — is common enough
-that Tenantry.Pro ships two base classes so you only write the per-tenant body:
+For that loop, Tenantry.Pro has two base classes; you override only the per-tenant work:
 
-- **`TenantBackgroundService<TKey>`** — runs once for every tenant, then completes. Good for a one-shot
-  startup or maintenance pass.
-- **`PeriodicTenantBackgroundService<TKey>`** — runs the sweep at startup and then every `Interval`.
+- `TenantBackgroundService<TKey>` runs once for every tenant, then completes: a startup or maintenance pass.
+- `PeriodicTenantBackgroundService<TKey>` runs at startup and then every `Interval`.
 
-Both sweep tenants sequentially and **isolate per-tenant failures**: an exception in one tenant is
-logged and the sweep continues, so one bad tenant never stops the rest. If a periodic sweep fails as a
+Both go through the tenants one at a time. An exception in one tenant is logged and the others go on. If a periodic sweep fails as a
 whole (the tenant store cannot be read, say), the failure is logged and the next sweep runs on schedule.
 A one-shot `TenantBackgroundService` whose store fails throws like any `BackgroundService`, which by
 default stops the host. Override
@@ -123,36 +115,34 @@ public sealed class NightlyRollup(
 builder.Services.AddHostedService<NightlyRollup>();
 ```
 
-Reach for the raw `ITenantScopeFactory<TKey>` (above) only when your loop doesn't fit the
-"every tenant" shape — e.g. processing a queue of specific tenant ids. The
+Use `ITenantScopeFactory<TKey>` directly when your loop is not over every tenant, such as a queue of tenant ids. The
 [BackgroundWorker sample](../samples/Tenantry.Pro.Samples.BackgroundWorker) runs a periodic sweep in a worker host.
 
 ## Suspended tenants
 
-Your store lists suspended tenants too (migrations find tenants there), and nothing on a
-background path checks a tenant's status: access validators run only for HTTP requests. So the loops
-above, `TenantBackgroundService`, `PeriodicTenantBackgroundService`, and the Hangfire, Quartz, MassTransit
-and Rebus integrations all run work for a suspended tenant, inside its scope. Check the status on your own
-descriptor type where the work starts:
+Tenantry Core's `ValidateTenantActivity` says which tenants may have work run for them:
 
 ```csharp no-compile
-protected override async Task ExecuteForTenantAsync(ITenantScope<string> scope, CancellationToken ct)
-{
-    if (scope.Tenant is not Tenant { IsActive: true }) return;   // Tenant is your descriptor type; not active: skip
-    // ...
-}
+tenant.ValidateTenantActivity(t => t.As<Tenant>().IsActive);   // Tenant is your descriptor type
 ```
 
-In a job or message handler, read `ITenantContext<TKey>.CurrentTenant` the same way, after handling a job
-that has no tenant (`HasTenant` is false) as you do today. Check for the active status rather than for the
-suspended one, so a descriptor of another type is skipped rather than served. Jobs already queued,
-and recurring jobs you scheduled for the tenant, keep running after it is suspended unless they check.
-The integrations' `OnMissingTenant` setting does not help here: a suspended tenant is found, not missing.
+With it, background work leaves out a tenant it refuses:
+
+- `RunInScopeAsync` throws `TenantInactiveException`.
+- `TenantBackgroundService` and `PeriodicTenantBackgroundService` skip the tenant.
+- Hangfire's `AddOrUpdateForEachTenant` and Quartz.NET's `ForEachTenant` leave it out.
+- A job or message for the tenant is handled as one whose tenant the store does not have: `OnUnresolvedTenant`
+  decides. Its default, `Reject`, fails it with `TenantInactiveException`, so it waits for the host's retries or
+  error queue.
+
+`CreateScope` does not check, because provisioning, offboarding and migrations must reach suspended tenants. A loop of
+your own that calls it should ask `ITenantActivity<TKey>.IsActiveAsync` first. Without `ValidateTenantActivity`,
+every tenant is active.
 
 ## Registering Pro in a non-HTTP host
 
 Use the same `AddTenantry<TKey>` as a web app, from Tenantry core, and add `UsePro` exactly as in a web app.
-There are no resolvers because there is no request — you open scopes yourself with the factory.
+There are no resolvers, because there is no request: you open scopes yourself with the factory.
 
 ```csharp
 using Microsoft.EntityFrameworkCore;
@@ -178,10 +168,9 @@ builder.Build().Run();
 
 ## Reading tenants from a singleton: `ITenantLookup<TKey>`
 
-A custom tenant store is **scoped** (for example an EF-backed store reading a `Tenants` table). A
-singleton — a hosted service, a Pro provisioning/migration service — must not inject `ITenantStore`
-directly: that is a captive dependency. Inject `ITenantLookup<TKey>` instead. It opens a fresh
-DI scope per call to resolve the store, so it is correct whether the store is singleton or scoped:
+A tenant store is often scoped (one that reads a `Tenants` table through EF Core, say), so a singleton such as a
+hosted service must not inject `ITenantStore`. Inject `ITenantLookup<TKey>`, which resolves the store in a new scope
+for each call:
 
 ```csharp no-compile
 ValueTask<ITenantDescriptor<TKey>?>           GetTenantAsync(TKey id, CancellationToken ct = default);
@@ -189,7 +178,7 @@ ValueTask<ITenantDescriptor<TKey>?>           FindByIdentifierAsync(string ident
 ValueTask<IReadOnlyList<ITenantDescriptor<TKey>>> GetAllTenantsAsync(CancellationToken ct = default);
 ```
 
-This is the same lookup the migration runner and health checks use to enumerate tenants, and the integrations
+It is the lookup the migration runner and health checks use to enumerate tenants, and the integrations
 use to look up the tenant of each job and message. With Tenantry Core's `tenant.CacheTenants()`, its lookups by id
 and identifier are served from a cache, so a job or message does not read the store each time
 ([caching](https://github.com/tenantry-org/tenantry-core/blob/master/docs/tenant-stores.md#caching)); listing every
@@ -197,16 +186,78 @@ tenant always reads the store.
 
 ## Library integrations
 
-For specific background-processing and messaging libraries, Tenantry.Pro ships dedicated integrations
-that capture and restore the tenant scope automatically — you usually do **not** need to call the
-scope factory by hand:
+Tenantry.Pro carries the tenant into these libraries' jobs and messages, so you do not open scopes yourself there:
 
-- [Hangfire](hangfire.md) — restores the enqueuing request's tenant when a job runs, enqueues for a tenant by
-  name (`ForTenant`), and runs a recurring job for each tenant (`AddOrUpdateForEachTenant`).
-- [Quartz.NET](quartz.md) — runs a scheduled job inside the tenant stamped into its job data, or once for each
-  tenant (`ForEachTenant`).
-- [MassTransit](masstransit.md) / [Rebus](rebus.md) — restore the tenant from a message header on consume, routing
-  slips included, and send for a tenant by name (`SetTenant`, `WithTenant`).
+- [Hangfire](hangfire.md): restores the enqueuing request's tenant when a job runs, enqueues for another tenant
+  (`WithTenant`), and runs a recurring job for each tenant (`AddOrUpdateForEachTenant`).
+- [Quartz.NET](quartz.md): runs a scheduled job inside the tenant stamped into its job data (`WithTenant`), or once
+  for each tenant (`ForEachTenant`).
+- [MassTransit](masstransit.md) and [Rebus](rebus.md): restore the tenant from a message header on consume, routing
+  slips included, and send for another tenant (`WithTenant`).
+
+Each `WithTenant` takes the tenant, or its id. Pass the tenant when you have it: an id of the wrong type (a slug in a
+`Guid`-keyed application) compiles, and the job or message then fails when it runs, as a tenant the store does not
+have.
 
 Reach for `ITenantScopeFactory<TKey>` when you own the loop: custom `BackgroundService`s, console
 tools, one-off maintenance jobs, or a scheduler without a dedicated Tenantry.Pro integration.
+
+To carry the tenant over another bus or job library (NServiceBus, Kafka, Azure Functions), write an adapter on the
+public API the integrations are built on. An `ITenantPropagationAdapter`, registered with
+`TenantPropagationAdapter.Add` from a `pro.Add…Propagation()` method of your own, gets `TenantPropagationOptions` of
+its own, the `ITenantPropagator` that `UsePro` registers, and the integrations' startup check: the application does not
+start if the adapter's host side never ran. The host side resolves `TenantPropagationIntegration<TAdapter>`, marks it
+wired, and carries the tenant with its `Propagator` and `Options`: put `CurrentTenantId` in a header when you send, and
+on receipt resolve the header and run the work inside `Use`:
+
+```csharp
+using Tenantry;
+using Tenantry.Pro;
+
+// What the startup check says when the host side never ran.
+public sealed class QueuePropagation : ITenantPropagationAdapter
+{
+    public string Registration => "pro.AddQueuePropagation()";
+
+    public string HostSide => "call services.UseQueueTenantry() when you build the queue's handler";
+}
+
+public sealed record QueueMessage(string Id, IDictionary<string, string> Headers);
+
+public static class QueuePropagationExtensions
+{
+    // The adapter's options ("Queue"), the propagator and the startup check.
+    public static IProBuilder<TKey> AddQueuePropagation<TKey>(
+        this IProBuilder<TKey> pro, Action<TenantPropagationOptions>? configure = null)
+        where TKey : IEquatable<TKey>, IParsable<TKey>
+    {
+        TenantPropagationAdapter.Add<TKey, QueuePropagation>(pro, "Queue", configure);
+        return pro;
+    }
+
+    // The host side: marks the adapter wired, and runs each message as the tenant it carries.
+    public static Func<QueueMessage, Func<Task>, CancellationToken, Task> UseQueueTenantry(this IServiceProvider services)
+    {
+        var integration = services.GetRequiredService<TenantPropagationIntegration<QueuePropagation>>();
+        integration.MarkWired();
+
+        return async (message, handle, ct) =>
+        {
+            message.Headers.TryGetValue(TenantPropagation.HeaderName, out var tenantId);
+            var tenant = await integration.Propagator.ResolveAsync(tenantId, integration.Options, "queue message", message.Id, ct);
+            if (tenant.Skip)
+                return;
+
+            using (integration.Propagator.Use(tenant))
+                await handle();
+        };
+    }
+}
+```
+
+A `WithTenant` method of your own puts `TenantPropagationAdapter.FormatTenantId(tenantId)` in the header: it refuses
+the ids reserved for no tenant, as the integrations' do. An adapter for a library with several buses, each configured
+on its own, implements `FindUnwired` to say which are not wired; one whose library configures itself only when one of
+its services is first resolved implements `RunDeferredHostConfiguration`.
+
+The receiver trusts the header as it is, as the integrations do: only let producers you control send to it.

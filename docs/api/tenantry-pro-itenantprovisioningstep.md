@@ -20,7 +20,7 @@ public interface ITenantProvisioningStep<TKey> where TKey : IEquatable<TKey>, IP
 
 ### `AppliesTo(TenantProvisioningContext<TKey>)`
 
-Returns whether the step applies to the tenant being provisioned; a step that does not is reported as [`TenantProvisioningStepStatus.Skipped`](tenantry-pro-tenantprovisioningstepstatus.md). By default it applies to every tenant.
+Returns whether the step applies to the tenant being provisioned; a step that does not is reported as [`TenantLifecycleStepStatus.Skipped`](tenantry-pro-tenantlifecyclestepstatus.md). By default it applies to every tenant.
 
 ```csharp
 bool AppliesTo(TenantProvisioningContext<TKey> context)

@@ -15,6 +15,8 @@ public static class TenantryProHealthChecksBuilderExtensions
 Adds a health check that every tenant's database is reachable: it opens a connection through `TContext`, created in each tenant's scope as the application registers it, once for each distinct database. The data has an entry for each tenant (`tenant:{id}`, the id formatted with the invariant culture).
 
 ```csharp
+[RequiresUnreferencedCode("EF Core reads entity types and their properties through reflection, which trimming can break. See https://aka.ms/efcore-docs-trimming.")]
+[RequiresDynamicCode("EF Core builds its model and queries at run time, which Native AOT does not support.")]
 public static IHealthChecksBuilder AddTenantDatabaseCheck<TContext>(this IHealthChecksBuilder builder, string? name = null, HealthStatus? failureStatus = null, IEnumerable<string>? tags = null, TimeSpan? timeout = null, Action<TenantHealthCheckOptions>? configure = null) where TContext : DbContext
 ```
 
