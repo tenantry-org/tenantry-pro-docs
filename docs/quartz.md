@@ -27,16 +27,12 @@ builder.Services.AddQuartzHostedService(o => o.WaitForJobsToComplete = true);
 
 `pro.AddQuartzPropagation()` registers the integration; `q.UseTenantry()` sets Tenantry's job factory, which makes
 the job's tenant current and then creates the job with Quartz's own DI job factory. The two calls can come in
-either order. `q.UseTenantry()` replaces the job factory, so set no other job factory after it.
+either order. `q.UseTenantry()` replaces the job factory, so set no other job factory after it. Tenantry uses a job
+factory because a tenant set in an `IJobListener` is gone by the time the job runs.
 
 If `pro.AddQuartzPropagation()` is called but Quartz's configuration never calls `q.UseTenantry()`, or a job
 factory set after it replaces Tenantry's, the application fails to start with an `InvalidOperationException` that
 names the missing call: its jobs would otherwise run without their tenant.
-
-> **Why a job factory and not an `IJobListener`?** An `IJobListener` would set the ambient tenant in
-> `JobToBeExecuted`, which Quartz awaits as a separate step before it awaits `IJob.Execute`. The `AsyncLocal` set
-> in the listener is undone before the job runs, so the job never sees the tenant. Creating and running the job
-> inside the tenant, from the job factory, is what makes it visible.
 
 ## Scheduling a job for a tenant
 
@@ -108,34 +104,22 @@ tenant's id. Each tenant's run executes, and can fail, on its own:
 | Job scheduled with `WithTenant(id)`, and the tenant is in the store | The job runs as that tenant |
 | Job marked `ForEachTenant()`, firing without a tenant | The job is triggered once for each tenant, each run as its tenant ([A job for each tenant](#a-job-for-each-tenant)) |
 | Job scheduled without a tenant | `OnMissingTenant` applies (default `Warn`: the job runs without a tenant, and a warning is logged) |
-| The stored tenant is not in the store, or its id is not a valid id | `OnUnresolvedTenant` applies (default `Reject`: the run fails) |
-| Tenant that `ValidateTenantActivity` refuses | As a tenant the store does not have: `OnUnresolvedTenant` applies ([Suspended tenants](background-jobs.md#suspended-tenants)) |
+| The stored tenant is not in the store, is suspended, or its id is not a valid id | `OnUnresolvedTenant` applies (default `Reject`: the run fails, with `TenantNotFoundException` or `TenantInactiveException`) ([Jobs and messages without a tenant](background-jobs.md#jobs-and-messages-without-a-tenant)) |
 
 While a job runs as its tenant, its logs carry a `TenantId` scope, and the trace span it runs in, if tracing
 records one, is tagged `tenant.id` ([Telemetry](telemetry.md#logs-and-traces)).
 
 ## Jobs without a tenant, or with one that cannot be found
 
-Two settings decide what happens to a job whose tenant cannot be made current:
-
-- `OnMissingTenant`: the job's data has no tenant. Default `Warn`.
-- `OnUnresolvedTenant`: the job's data has a tenant id that the store does not have (a tenant deleted since the job
-  was scheduled), or that is not a valid id of the key type. Default `Reject`, so the job never runs as no tenant.
+`OnMissingTenant` (default `Warn`) and `OnUnresolvedTenant` (default `Reject`) decide what happens to a job whose
+tenant cannot be made current ([Jobs and messages without a tenant](background-jobs.md#jobs-and-messages-without-a-tenant)).
+Set them for Quartz.NET when you add it:
 
 ```csharp
 using Tenantry.Pro;
 
 pro.AddQuartzPropagation(o => o.OnMissingTenant = TenantPropagationBehavior.Skip);
 ```
-
-| `TenantPropagationBehavior` | Effect |
-|-------------------------|--------|
-| `Allow` | Run the job without a tenant, silently. |
-| `Warn` | Run the job without a tenant, and log a warning. |
-| `Skip` | Do not create or run the job, and log a warning. Quartz counts the run as done. |
-| `Reject` | Throw `TenantNotResolvedException` (`TenantNotFoundException` for a tenant the store does not have). Quartz logs it and tells job listeners, wrapped in a `JobExecutionException`; the job's triggers keep firing. |
-
-The same settings exist on every Tenantry.Pro integration, each set separately.
 
 ## Accessing the tenant inside a job
 

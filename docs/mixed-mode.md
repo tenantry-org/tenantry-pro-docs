@@ -82,31 +82,42 @@ public sealed class Country
 }
 ```
 
-Any other entity would be read and written across tenants, so a `Shared` tenant's context with one throws
-`TenantIsolationViolationException` (`Kind` is `ModelConfiguration`) on its first query or save, naming the entities.
-`Schema` and `Database` tenants have tables of their own and need neither. Tenantry.Pro.EfCore makes the check, once
-any of its registration methods is called (`UseSchemaPerTenant`, `AddMigrations` and the others): the migration of
-the shared database for `Shared` tenants is refused too.
+Tenantry Core takes any other entity type as shared by every tenant, and by default checks nothing
+([`OnUnmarkedEntityType`](https://github.com/tenantry-org/tenantry-core/blob/master/docs/efcore-integration.md#entity-types-that-are-not-tenant-owned)).
+In mixed mode that type means two things: a `Schema` or `Database` tenant has its rows to itself, in its own schema or
+database, while the `Shared` tenants all read and write the same rows. So Tenantry.Pro.EfCore refuses it for a
+`Shared` tenant: the context throws `TenantIsolationViolationException` (`Kind` is `ModelConfiguration`) on its first
+query or save, naming the entity types, and the migration of the shared database for `Shared` tenants is refused too.
+It does so whatever the context's `OnUnmarkedEntityType` is, as that option applies to every tenant of the context.
+Pro makes the check once any of its registration methods is called (`UseSchemaPerTenant`, `AddMigrations` and the
+others).
+
+Which tenants are `Shared` is known only once a tenant is resolved, so the check cannot refuse anything as the host
+starts. Instead, the host logs a warning for each registered context with such entity types, naming them
+(`SharedTenantsRefusedContext`, [Telemetry](telemetry.md)), unless the warning is filtered or cannot be written. To find
+them, it creates each registered context that uses `UseTenantry()` and builds its model as it starts, so code in the
+context's options that connects to the database runs then too. A context it cannot create without a tenant, or one that
+calls `UseTenantry()` only in its `OnConfiguring`, is logged the first time a tenant uses it. Implement
+`ITenantEntity<TKey>` on each type that belongs to a tenant, and mark the others `[SharedAcrossTenants]`. An application
+whose tenants all have a database or schema of their own can mark them too, or leave the warning out of its logs with
+`builder.Logging.AddFilter("Tenantry.Pro.MixedMode", LogLevel.Error)`, which silences it for every context.
 
 ## What honours it
 
-- **Connection strings** come from your `UseConnectionStrings` delegate, as above: it returns the tenant's own
-  database for `Database` tenants and the shared database for the others, so `AddDbContextPerTenantDatabase`
-  connects every tenant's context to the right database.
-- **Schemas** come from your `GetSchemaName` delegate, which `UseSchemaPerTenant` calls only for `Schema`
-  tenants: their contexts' models get their schema, and the other tenants' the database's default. EF Core
-  keeps a model per schema: each schema tenant's model has its schema, and `Database` and `Shared` tenants
-  share the model without one.
-- **Provisioning** ([Tenant lifecycle](tenant-lifecycle.md)) gives each tenant only its own infrastructure:
+- Connection strings come from your `UseConnectionStrings` delegate, as above: it returns the tenant's own database
+  for `Database` tenants and the shared database for the others, so `AddDbContextPerTenantDatabase` connects every
+  tenant's context to the right database.
+- Schemas come from your `GetSchemaName` delegate, which `UseSchemaPerTenant` calls only for `Schema` tenants.
+  `Database` and `Shared` tenants use the database's default schema and share one compiled model.
+- Provisioning ([Tenant lifecycle](tenant-lifecycle.md)) gives each tenant only its own infrastructure:
   `CreateDatabase` applies only to `Database` tenants, `CreateSchema` only to `Schema` tenants, and `Migrations` to
   both, in the tenant's database or schema. The steps that do not apply are reported as `Skipped`; a `Shared`
   tenant's database is migrated with the others (below). Your own steps see the tenant's isolation in
   `context.Isolation`, and decide in `AppliesTo`.
-- **Offboarding** ([Tenant lifecycle](tenant-lifecycle.md#offboarding-a-tenant)) removes only the tenant's own:
-  `DropDatabase` applies only to `Database` tenants, `DropSchema` only to `Schema` tenants, and `DeleteSharedData` to
-  `Shared` tenants, to `Schema` tenants' rows in a context schema per tenant leaves in the shared schema, and to
-  `Database` tenants' rows in a context whose database `AddDatabaseDeprovisioning` does not drop.
-- **Migrations** ([Tenant migrations](migration-orchestration.md)) and the migration
+- Offboarding removes only the tenant's own: `DropDatabase` for `Database` tenants, `DropSchema` for `Schema`
+  tenants, and `DeleteSharedData` for the tenant's rows in a context that is not dropped with it
+  ([which tenants each step applies to](tenant-lifecycle.md#offboarding-a-tenant)).
+- Migrations ([Tenant migrations](migration-orchestration.md)) and the migration
   [health check](health-checks.md) work per distinct database or schema: each `Database` tenant's database, each
   `Schema` tenant's schema, and the shared database's default schema once for all the `Shared` tenants. The
   connectivity check works per database: the shared database once, for the `Schema` and `Shared` tenants together.

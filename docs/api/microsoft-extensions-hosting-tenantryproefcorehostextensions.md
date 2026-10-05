@@ -12,13 +12,15 @@ public static class TenantryProEfCoreHostExtensions
 
 ### `MigrateTenantsArgument`
 
-The command-line argument that asks for the migrations to be run: `migrate-tenants`. It has no leading dashes, because ASP.NET Core's command-line configuration would read `--migrate-tenants` as a setting and take the next argument as its value.
+The command-line argument that asks for the migrations to be run: `migrate-tenants`.
 
 ```csharp
 public const string MigrateTenantsArgument = "migrate-tenants"
 ```
 
 Returns: `string`
+
+It has no leading dashes, because ASP.NET Core's command-line configuration would read `--migrate-tenants` as a setting and take the next argument as its value.
 
 ## Methods
 

@@ -85,15 +85,15 @@ sent. For where it is resolved, see [Where the store and provider come from](#wh
 
 ## Leaving things out
 
-- **`opts.Exclude<T>()`** leaves out every entity of type `T`, of a type derived from it (or implementing it, when `T`
+- `opts.Exclude<T>()` leaves out every entity of type `T`, of a type derived from it (or implementing it, when `T`
   is an interface), and the entities they own, whichever type the ownership is configured on.
-- **`opts.ExcludeProperty<T>(x => x.Property)`** leaves a property out of every entry of `T` and its derived types:
+- `opts.ExcludeProperty<T>(x => x.Property)` leaves a property out of every entry of `T` and its derived types:
   its value is never copied, and it is in none of `OldValues`, `NewValues` and `ChangedProperties` (a key property
   still makes up `PrimaryKey`). An update that changes only excluded properties is not recorded. Naming the
   navigation to an owned type, `opts.ExcludeProperty<User>(u => u.Credentials)`, leaves out the entities owned through
   it, and naming a complex property leaves out its values; for one property of an owned or complex type, name it on
   that type: `opts.ExcludeProperty<Address>(a => a.Street)`.
-- **`opts.ShouldAudit`** decides for each entity whether to record it, from its `EntityEntry`, before its values are
+- `opts.ShouldAudit` decides for each entity whether to record it, from its `EntityEntry`, before its values are
   read: `opts.ShouldAudit = entry => entry.Metadata.GetTableName() != "Sessions";`. It is asked about each owned
   entity on its own (`entry.Metadata.IsOwned()`), so leaving out an owner does not leave out what it owns, as
   `Exclude<T>()` does.
@@ -102,24 +102,26 @@ sent. For where it is resolved, see [Where the store and provider come from](#wh
 
 By default (`AuditTiming.AfterCommit`), the store gets a save's entries once its changes are committed:
 
-- **A save in no transaction of yours**: when `SaveChanges` completes.
-- **In a transaction you begin** (`Database.BeginTransaction`): when it commits, the entries of its saves in one call
+- A save in no transaction of yours: when `SaveChanges` completes.
+- In a transaction you begin (`Database.BeginTransaction`): when it commits, the entries of its saves in one call
   for each context. Contexts you hand it to (`Database.UseTransaction(transaction.GetDbTransaction())`) wait for it
   too, whichever context commits it. If it rolls back, or is disposed without a commit, the entries are discarded, as
   are those of a save that failed. Commit through the `IDbContextTransaction` (or `Database.CommitTransaction`):
   EF Core's interceptors do not see a commit made on the `DbTransaction` itself.
-- **Rolled back to a savepoint**: the entries saved since the latest savepoint are discarded. EF Core does not tell
+- Rolled back to a savepoint: the entries saved since the latest savepoint are discarded. EF Core does not tell
   interceptors which savepoint a transaction was rolled back to, so roll back only to the latest one. On SQL Server,
   which cannot release a savepoint, a released savepoint still counts.
-- **In a `TransactionScope`**, or a transaction the connection was enlisted in (`Database.EnlistTransaction`): when it
+- In a `TransactionScope`, or a transaction the connection was enlisted in (`Database.EnlistTransaction`): when it
   completes, and discarded if it is not completed. The store's writes are not part of that transaction. If EF Core's
   `AmbientTransactionWarning` is ignored for a provider that cannot enlist (SQLite), changes saved in a scope that is
   not completed are committed all the same, but their entries are discarded.
-- **In a transaction begun outside an audited context** (with ADO.NET, say) and handed to the context with
+- In a transaction begun outside an audited context (with ADO.NET, say) and handed to the context with
   `Database.UseTransaction`: when `SaveChanges` completes, as Tenantry cannot see when that transaction commits. The
   store runs while it is still open, and the entries stay written if it rolls back.
 
-**When the store fails.** The changes are in the database by then (apart from that last case), so by default the
+### When the store fails
+
+The changes are in the database by then (apart from that last case), so by default the
 failure is logged as an error and the save, or the commit, succeeds; the store's token is never cancelled, for the
 same reason. Set `o.OnStoreFailure = AuditStoreFailureBehavior.Throw` to have `SaveChanges`, or the commit, throw an
 `AuditStoreException` instead, with the unwritten entries in `Entries`. The changes are saved all the same, so do not
@@ -293,6 +295,9 @@ null records, as its old values, its properties' defaults or an empty collection
 
 ## Limitations
 
+- Only changes `SaveChanges` writes are recorded. `ExecuteUpdate`, `ExecuteDelete` and raw SQL (`ExecuteSql`,
+  `ExecuteSqlRaw`) do not go through `SaveChanges`, so they produce no entries, nor do the rows offboarding's
+  `DeleteSharedData` deletes: record them in your own code.
 - A synchronous `SaveChanges` or `Commit`, and a `TransactionScope`'s completion, which is always synchronous,
   wait for the store, whose `SaveAsync` is asynchronous: prefer `SaveChangesAsync`. Use `ConfigureAwait(false)` in
   the store, so it does not need the caller's synchronization context: a scope completing on a UI thread (WPF,
@@ -302,6 +307,6 @@ null records, as its old values, its properties' defaults or an empty collection
 
 ## See also
 
-- [Background jobs & non-HTTP hosts](background-jobs.md) — `AuditEntry.TenantId` is `null` for work
-  that runs without a tenant scope; open a scope first if you want jobs audited under a tenant.
-- [Troubleshooting](troubleshooting.md) — the AOT/trimming analyzer warnings are expected here.
+- [Background jobs & non-HTTP hosts](background-jobs.md): `AuditEntry.TenantId` is `null` for work that runs without
+  a tenant scope; open a scope first if you want jobs audited under a tenant.
+- [Troubleshooting](troubleshooting.md): the trimming and AOT analyzer warnings are expected here.

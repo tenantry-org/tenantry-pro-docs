@@ -25,7 +25,7 @@ New to it? Start with [Installation](installation.md), then [Getting started](ge
    offboarding one.
 10. [Audit logging](audit-logging.md): recording each tenant's entity changes.
 11. [Health checks](health-checks.md): tenant database connectivity and pending migrations.
-12. [Telemetry](telemetry.md): the tenant on ASP.NET Core's request metrics, and Pro's log events.
+12. [Telemetry](telemetry.md): the tenant in jobs' and messages' logs and traces, and Pro's log events.
 
 ### Background work & messaging
 13. [Background jobs & non-HTTP hosts](background-jobs.md): work for each tenant in workers and console apps.
@@ -37,6 +37,10 @@ New to it? Start with [Installation](installation.md), then [Getting started](ge
 16. [Compatibility](compatibility.md): supported .NET, EF Core, database and library versions.
 17. [Troubleshooting](troubleshooting.md): common problems, and trimming and AOT.
 18. [API reference](api/README.md): every public type and member.
+
+An AI coding agent adding Tenantry to an application follows Tenantry Core's
+[guide for AI coding agents](https://github.com/tenantry-org/tenantry-core/blob/master/docs/ai-agents.md) first: its
+steps, isolation test and rules apply with Pro too.
 
 ## A request
 

@@ -30,6 +30,8 @@ Value: `IList<Type>`
 
 Left empty while more than one context type uses `UseTenantry()`, schema per tenant cannot tell which     of them get the tenant's schema, so it fails closed with `InvalidOperationException`, which     names them: when the host starts, for the contexts the application registers (with `AddDbContext`,     `AddDbContextFactory` or Tenantry Core's `AddDbContextPerTenantDatabase`, say), and before     `migrate-tenants` or the migration runner migrates a tenant. A context built another way, or whose     options cannot be built without a tenant, fails when its options are built, and from then on so does     every schema-per-tenant context of the application: none is moved into the tenant's schema, or left out of     it, by guesswork.
 
+A context gets the tenant's schema only when its options call `UseTenantry()`. The same checks throw     `InvalidOperationException` for a registered context that is listed and does not call it, and,     with none listed, when no registered context calls it: every tenant would use the database's default     schema. List the type of a schema-per-tenant context the application builds itself and does not register.
+
 A context type that derives from another counts as that one, as it would when listed: a test's context that     derives from `AppDbContext` needs no list. Two that derive from a common base, and not from one     another, are two contexts.
 
 ```csharp
@@ -38,13 +40,15 @@ o.Contexts.Add(typeof(AppDbContext));
 
 ### `GetSchemaName`
 
-Returns the name of a tenant's schema. Required. It is called often, so it must be fast, and it must give the same name for a tenant each time; tenants given the same name share a schema. In mixed mode it is called only for [`TenantIsolation.Schema`](tenantry-pro-tenantisolation.md) tenants.
+Returns the name of a tenant's schema. Required.
 
 ```csharp
 public Func<ITenantDescriptor<TKey>, string>? GetSchemaName { get; set; }
 ```
 
 Value: `Func<ITenantDescriptor<TKey>, string>`
+
+It is called often, so it must be fast, and it must give the same name for a tenant each time; tenants given the same name share a schema. In mixed mode it is called only for [`TenantIsolation.Schema`](tenantry-pro-tenantisolation.md) tenants.
 
 ```csharp
 o.GetSchemaName = tenant => $"tenant_{tenant.TenantId}";

@@ -82,13 +82,15 @@ For that loop, Tenantry.Pro has two base classes; you override only the per-tena
 - `TenantBackgroundService<TKey>` runs once for every tenant, then completes: a startup or maintenance pass.
 - `PeriodicTenantBackgroundService<TKey>` runs at startup and then every `Interval`.
 
-Both go through the tenants one at a time. An exception in one tenant is logged and the others go on. If a periodic sweep fails as a
-whole (the tenant store cannot be read, say), the failure is logged and the next sweep runs on schedule.
-A one-shot `TenantBackgroundService` whose store fails throws like any `BackgroundService`, which by
-default stops the host. Override
-`ExecuteForTenantAsync` with the per-tenant work. It gets the tenant's `ITenantScope<TKey>`: `scope.Tenant`
-is the tenant, and scoped services resolved from `scope.ServiceProvider` see it. The base class disposes the
-scope afterwards. Log through the protected `Logger`, the logger you pass to the constructor.
+Override `ExecuteForTenantAsync` with the per-tenant work. It gets the tenant's `ITenantScope<TKey>`: `scope.Tenant`
+is the tenant, and scoped services resolved from `scope.ServiceProvider` see it. The base class disposes the scope
+afterwards. Log through the protected `Logger`, the logger you pass to the constructor.
+
+Both go through the tenants one at a time, in the store's order, each in its own scope; override `MaxConcurrency` to
+run that many tenants at once, in any order. An exception in one tenant is logged with its id and the others go on.
+If a periodic sweep fails as a whole (the tenant store cannot be read, say), the failure is logged and the next sweep
+runs on schedule. A one-shot `TenantBackgroundService` whose store fails throws like any `BackgroundService`, which by
+default stops the host. When the host stops, no tenant starts, and the tenants running get the cancelled token.
 
 ```csharp
 using Tenantry;
@@ -118,6 +120,53 @@ builder.Services.AddHostedService<NightlyRollup>();
 Use `ITenantScopeFactory<TKey>` directly when your loop is not over every tenant, such as a queue of tenant ids. The
 [BackgroundWorker sample](../samples/Tenantry.Pro.Samples.BackgroundWorker) runs a periodic sweep in a worker host.
 
+### One instance of several
+
+Each instance of the application runs its own sweeps, so with three instances every tenant's work runs three times.
+To run a sweep on one instance, override `ShouldRunAsync`. It is called before each sweep reads the tenant store,
+with the host's stopping token. When it returns `false`, this instance skips the sweep and a periodic service asks
+again at the next `Interval`. When it throws, the sweep fails as one whose store cannot be read does.
+
+The instances' sweeps start at different times, and the base class has no call after a sweep to release a lock. So
+take a lease that lasts nearly the whole `Interval`, and longer than a sweep: the instance that took it runs the
+sweep, and the others find it taken whenever their own sweeps come round. A lease shorter than that lets the next
+instance take it in the same interval. A stored time of the last sweep, which `ShouldRunAsync` checks and moves on in
+one update, works the same way.
+
+```csharp
+// Your application's leases, in your database or Redis: true for the one caller that takes the lease, which then
+// holds it until it expires.
+public interface ILeases
+{
+    ValueTask<bool> TryTakeAsync(string name, TimeSpan duration, CancellationToken cancellationToken);
+}
+
+public sealed class LeasedRollup(
+    ITenantScopeFactory<string> scopeFactory,
+    ITenantLookup<string> tenants,
+    ILeases leases,
+    ILogger<LeasedRollup> logger)
+    : PeriodicTenantBackgroundService<string>(scopeFactory, tenants, logger)
+{
+    protected override TimeSpan Interval => TimeSpan.FromHours(24);
+
+    protected override int MaxConcurrency => 4;
+
+    // Most of the interval: longer than a sweep, and ended before this instance's next sweep asks again.
+    protected override ValueTask<bool> ShouldRunAsync(CancellationToken cancellationToken) =>
+        leases.TryTakeAsync(nameof(LeasedRollup), Interval - TimeSpan.FromMinutes(5), cancellationToken);
+
+    protected override async Task ExecuteForTenantAsync(ITenantScope<string> scope, CancellationToken ct)
+    {
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.SaveChangesAsync(ct);
+    }
+}
+```
+
+Hangfire's `AddOrUpdateForEachTenant` and Quartz.NET's `ForEachTenant` with a clustered job store run each tenant's
+work once across instances without a hook ([Library integrations](#library-integrations)).
+
 ## Suspended tenants
 
 Tenantry Core's `ValidateTenantActivity` says which tenants may have work run for them:
@@ -131,9 +180,9 @@ With it, background work leaves out a tenant it refuses:
 - `RunInScopeAsync` throws `TenantInactiveException`.
 - `TenantBackgroundService` and `PeriodicTenantBackgroundService` skip the tenant.
 - Hangfire's `AddOrUpdateForEachTenant` and Quartz.NET's `ForEachTenant` leave it out.
-- A job or message for the tenant is handled as one whose tenant the store does not have: `OnUnresolvedTenant`
-  decides. Its default, `Reject`, fails it with `TenantInactiveException`, so it waits for the host's retries or
-  error queue.
+- A job or message for the tenant follows `OnUnresolvedTenant`
+  ([Jobs and messages without a tenant](#jobs-and-messages-without-a-tenant)): by default it fails with
+  `TenantInactiveException`, and the host's retries and error handling apply.
 
 `CreateScope` does not check, because provisioning, offboarding and migrations must reach suspended tenants. A loop of
 your own that calls it should ask `ITenantActivity<TKey>.IsActiveAsync` first. Without `ValidateTenantActivity`,
@@ -202,13 +251,42 @@ have.
 Reach for `ITenantScopeFactory<TKey>` when you own the loop: custom `BackgroundService`s, console
 tools, one-off maintenance jobs, or a scheduler without a dedicated Tenantry.Pro integration.
 
+## Jobs and messages without a tenant
+
+Each integration (Hangfire, Quartz.NET, MassTransit and Rebus) makes a job's or message's tenant current through the
+same lookup, so two settings decide what happens when it cannot, whichever integration it is:
+
+| The job or message | Setting (default) | `Reject` throws |
+|--------------------|-------------------|-----------------|
+| Carries no tenant, as one created outside a request or by a scheduler | `OnMissingTenant` (`Warn`) | `TenantNotResolvedException` |
+| Carries an id that is not a valid id of the key type | `OnUnresolvedTenant` (`Reject`) | `TenantNotResolvedException` |
+| Carries a tenant the store does not have, such as one deleted since | `OnUnresolvedTenant` (`Reject`) | `TenantNotFoundException` |
+| Carries a tenant `ValidateTenantActivity` refuses, such as a suspended one | `OnUnresolvedTenant` (`Reject`) | `TenantInactiveException` |
+
+A tenant the store does not have and a suspended tenant differ only in the exception `Reject` throws and in the
+message logged; the setting applies to both alike. `TenantNotFoundException` and `TenantInactiveException` are both
+`TenantNotResolvedException`s.
+
+| `TenantPropagationBehavior` | The job or handler | Hangfire | Quartz.NET | MassTransit | Rebus |
+|-----------------------------|--------------------|----------|------------|-------------|-------|
+| `Allow` | Runs without a tenant | Runs the job | Runs the job | Consumes the message | Handles the message |
+| `Warn` | Runs without a tenant, and a warning is logged | Runs the job | Runs the job | Consumes the message | Handles the message |
+| `Skip` | Does not run, and a warning is logged | Deletes the job ("Canceled by filter 'TenantJobFilter'") | Does not create the job, and counts the run as done | Moves the message to the endpoint's `_skipped` queue; a routing slip faults ([Routing slips](masstransit.md#routing-slips)) | Acknowledges the message, so it is dropped |
+| `Reject` | Does not run: the exception above is thrown | Records the job as failed and applies its retry policy | Logs the exception and tells job listeners, wrapped in a `JobExecutionException`; the job's triggers keep firing | Faults the message as if the consumer had thrown: your retry policy applies, then MassTransit moves it to the `_error` queue | Retries the message, then moves it to the error queue |
+
+Set them when you add the integration, as in `pro.AddHangfirePropagation(o => o.OnMissingTenant = ...)`. Each
+integration's settings are its own. Use `Allow` for work meant to run without a tenant, such as global maintenance,
+and `Skip` or `Reject` for `OnMissingTenant` when every job or message must carry one.
+
+## Another library
+
 To carry the tenant over another bus or job library (NServiceBus, Kafka, Azure Functions), write an adapter on the
-public API the integrations are built on. An `ITenantPropagationAdapter`, registered with
-`TenantPropagationAdapter.Add` from a `pro.Add…Propagation()` method of your own, gets `TenantPropagationOptions` of
-its own, the `ITenantPropagator` that `UsePro` registers, and the integrations' startup check: the application does not
-start if the adapter's host side never ran. The host side resolves `TenantPropagationIntegration<TAdapter>`, marks it
-wired, and carries the tenant with its `Propagator` and `Options`: put `CurrentTenantId` in a header when you send, and
-on receipt resolve the header and run the work inside `Use`:
+public API the integrations are built on. Register an `ITenantPropagationAdapter` with `TenantPropagationAdapter.Add`,
+from a `pro.Add…Propagation()` method of your own: it gets its own `TenantPropagationOptions`, the
+`ITenantPropagator` that `UsePro` registers, and the startup check that stops the application starting when the
+adapter's host side never ran. The host side resolves `TenantPropagationIntegration<TAdapter>`, calls `MarkWired()`,
+and carries the tenant with its `Propagator` and `Options`: put `CurrentTenantId` in a header when you send, and on
+receipt resolve the header and run the work inside `MakeCurrent`:
 
 ```csharp
 using Tenantry;
@@ -248,7 +326,7 @@ public static class QueuePropagationExtensions
             if (tenant.Skip)
                 return;
 
-            using (integration.Propagator.Use(tenant))
+            using (integration.Propagator.MakeCurrent(tenant))
                 await handle();
         };
     }
@@ -260,4 +338,6 @@ the ids reserved for no tenant, as the integrations' do. An adapter for a librar
 on its own, implements `FindUnwired` to say which are not wired; one whose library configures itself only when one of
 its services is first resolved implements `RunDeferredHostConfiguration`.
 
-The receiver trusts the header as it is, as the integrations do: only let producers you control send to it.
+`ResolveAsync` reads the tenant the header names from the store and asks `ValidateTenantActivity`, as the
+integrations do, and `MakeCurrent` makes that store copy current. The header itself is not authenticated, so any
+producer that can send to the receiver can name any tenant: only let producers you control send to it.

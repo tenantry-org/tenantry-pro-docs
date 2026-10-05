@@ -7,6 +7,124 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-05
+
+### Upgrading from 0.6
+
+- Pro 0.7 runs on Tenantry Core 0.7. Follow Core's "Upgrading from 0.6" list too.
+- `ITenantPropagator.Use(tenant)` is now `MakeCurrent(tenant)`, as Tenantry Core's `ITenantContextSetter<TKey>.Use`
+  is now `MakeCurrent`: rename the call in an adapter of your own.
+- `IConnectionStringCache<TKey>` is removed. When a tenant's connection details change, call Tenantry Core's
+  `ITenantInvalidator<TKey>.InvalidateAsync(tenantId)`, or `InvalidateAllAsync()` for every tenant. It clears the
+  cached connection string and the tenant's cached descriptor, which the connection-string delegate may read; the
+  removed interface's `Invalidate` cleared only the first, so with `CacheTenants` the next read could return the old
+  connection string again.
+- A class derived from `PeriodicTenantBackgroundService<TKey>` must be compiled again: its constructor takes an
+  optional `TimeProvider` now, which code compiled against 0.6 does not pass. The source needs no change.
+- On MySQL, offboarding now refuses to drop a tenant's database when another tenant has a database of the same name
+  on a server with another `server_uuid`, which 0.6 dropped. If no MySQL server your tenants reach replicates
+  another, set `o.IndependentMySqlServers = true` in `pro.AddDatabaseDeprovisioning<TContext>(o => …)`.
+
+### Removed
+
+- `IConnectionStringCache<TKey>` ([Upgrading](#upgrading-from-06)).
+- `Tenantry.Pro.AspNetCore` and its `pro.AddTenantMetrics()`. Tenantry Core 0.7.0's `tenant.TagRequestMetrics()`, in
+  `Tenantry.AspNetCore`, adds the same `tenant.id` tag to ASP.NET Core's request metric, and takes the function that
+  was `TenantMetricsOptions.GetTagValue`. Remove the package reference and the call, and call
+  `tenant.TagRequestMetrics()` on the `AddTenantry` builder instead.
+- Log event 4117 (`AppliedMigrationsNotRecorded`): applied migrations no longer come from EF Core's diagnostic events,
+  which a context could make unobservable.
+
+### Added
+
+- Log event 4008 (`PoolNotCleared`, debug): provisioning found a tenant's database and could not release the pooled
+  connection it checked with, because the connection's provider has no `ClearPool`.
+- In mixed mode, the host logs a warning as it starts for each registered context with entity types that are neither
+  tenant-owned nor marked as shared, naming them, as a `Shared` tenant is refused that context (event 4402,
+  `SharedTenantsRefusedContext`). A context that cannot be created without a tenant is logged the first time a tenant
+  uses it.
+- `TenantBackgroundService.ShouldRunAsync`, called before each sweep, to run a sweep on one instance of several: check
+  that the instance is the leader, or take a lease. A sweep it skips is logged at debug level (event 3204,
+  `SweepSkipped`), and a periodic service asks again at the next interval.
+- `TenantBackgroundService.MaxConcurrency`, how many tenants a sweep works on at once. The default, 1, keeps them one
+  after another.
+- `PeriodicTenantBackgroundService` takes an optional `TimeProvider`, which times its sweeps
+  ([Upgrading](#upgrading-from-06)).
+
+### Changed
+
+- `MigrationResult.AppliedMigrations` lists the migrations in the database's history after the run that were not in
+  it before. It was read from EF Core's diagnostic events, which a context could make unobservable. The history does
+  not say who applied a migration, so when two runners migrate one database at once a
+  migration may be listed by either, or by both.
+- The docs no longer list MariaDB as supported, because no test suite runs against it.
+- Pack compares each package's API with 0.6.0, which CI downloads from the feed, so a patch cannot break code built
+  against 0.6.0.
+
+### Fixed
+
+- Pro's own awaits no longer return to the caller's synchronization context, so a desktop app that waits on its UI
+  thread for provisioning, offboarding, a migration run, a cached connection string or a sweep no longer deadlocks.
+  Provisioning and offboarding steps, and a sweep's per-tenant work, may run on a thread-pool thread when a UI thread
+  started them. A `Progress<T>` passed to `MigrateAsync` still reports on the context it was created on.
+- After `ITenantInvalidator<TKey>.InvalidateAsync(tenantId)` or `InvalidateAllAsync()`, a request or job that read the
+  tenant before the invalidation no longer puts the old connection string back in the `CacheConnectionStrings()`
+  cache, where every later read got it until `Duration` ended. The connection string of a tenant invalidated since
+  the application started is computed from the store's copy of the tenant, read through `ITenantLookup<TKey>`, and
+  from the caller's descriptor when the store does not have the tenant. When the store cannot be read, the caller's
+  descriptor is used, its connection string is not cached, and a warning is logged (event 3302).
+- The audit entries of a transaction disposed without a commit or a rollback no longer attach to a later transaction
+  in the same `DbTransaction` object. Npgsql reuses its transaction objects, so a transaction begun through ADO.NET
+  on that connection and handed to a context with `UseTransaction` took them: committed through EF Core, it wrote the
+  entries of the changes that were rolled back, and its own entries waited for that commit instead of being written
+  at each save. A transaction that an audited context began and still has keeps its entries when another context
+  joins it with `UseTransaction`.
+- Schema per tenant refuses a registered context it applies to whose options do not call `UseTenantry()`: one listed
+  in `SchemaPerTenantOptions.Contexts`, or, with none listed, every registered context when none calls it. It reads
+  the options a created context has, so a call in `OnConfiguring` counts, and two contexts that make it there are found
+  as the host starts. A context it cannot create without a tenant is checked when Pro creates it for a tenant, and the
+  host logs a warning that names it (event 4401, `SchemaPerTenantContextNotChecked`), unless it comes from
+  `AddDbContextPerTenantDatabase` and needs a tenant only to find its database. The host does not start, `migrate-tenants` returns 3, `DeprovisionAsync` throws before any step, and a migration of a context
+  whose options need a tenant fails for that tenant, each with an `InvalidOperationException` that names the context
+  or contexts. Such a context never got a tenant's
+  schema: the first tenant's migration created its tables in the database's default schema, and every tenant read and
+  wrote them there, with no error.
+- `migrate-tenants` leaves configuration overrides whose key begins like one of its options to the application:
+  `--Tenantry:License=...`, `--Tenants:0:Id=...`, `--TenantStore=...`. It refused them with "Unknown option" and
+  exit code 3. It still refuses a misspelt option, such as `--tenants`, `--Tenant` or `--max-failure`, and now
+  refuses `-t acme`, `--tenant:acme` and an option written with `/`, a single `-` or a dash autocorrect put in, such
+  as `/tenant acme`, `-tenant acme`, or the long dash autocorrect writes for `--` (the guide shows it), which it read as the application's and migrated every tenant.
+  The argument after the application's own option is that option's value, so `--urls /tenant` is not refused, unless
+  it is an option of `migrate-tenants` or a misspelling of one that begins with `--`, so `--verbose --tenant acme`
+  migrates acme.
+- `TenantDeprovisioningContext.DataDropped` is `true` only when every database or schema offboarding drops for the
+  tenant is gone. With two drops registered it was `true` as soon as one found its target gone, so a step that
+  exports the tenant's data could skip a database that still held it, which the drop then removed.
+- Offboarding tells a tenant's database apart from another tenant's database of the same name when their connection
+  strings name the server differently: it drops the leaving tenant's when they are two databases, and refuses, naming
+  the other tenant, when they are one. `DropDatabase` and `DropSchema` failed in both cases with "whether it is the
+  same database could not be read", because the leaving tenant's database was asked which it is while the other
+  tenant was current, which Tenantry Core refuses.
+- On MySQL, offboarding refuses to drop a tenant's database when another tenant has a database of the same name on a
+  server with another `server_uuid`, unless `DatabaseDeprovisioningOptions.IndependentMySqlServers` says no server
+  replicates another ([Upgrading](#upgrading-from-06)). A replica or group member has a `server_uuid` of its own and
+  a drop on one server reaches those that replicate it, so offboarding dropped the leaving tenant's database when
+  another tenant reached it through a replica under another host name.
+- With schema per tenant on PostgreSQL, offboarding no longer reports a tenant's schema dropped while it is still
+  there. The login's `INFORMATION_SCHEMA` does not show it a schema it has no privilege on, so `DropSchema` took the
+  schema for gone and succeeded, and the migration runner reported the schema missing. Both now read the database's
+  own catalogue, and `DropSchema` fails, naming the right it needs, when the login may not drop the schema (on SQL
+  Server too, where the drop used to fail with the server's own message). A schema that holds something
+  `DropSchema` does not drop (a view, a function, a type, a collation, a text search configuration) fails the step
+  with their names; on PostgreSQL, everything `pg_depend` ties to the schema, an extension named once. A table in
+  another schema that references the schema's tables, and on PostgreSQL a table with a foreign key that the login
+  does not own, fail the step before anything is dropped, naming the table. On SQL Server, which shows a login only
+  the tables it may use, a referencing table the login cannot see fails the drop instead, with a message saying so
+  and the server's; the transaction puts back what was dropped.
+- Offboarding asks which database it is when another tenant has a database of the same name on the same host but
+  another port. MySQL's drivers leave the port out of the server name, so two MySQL servers on one host were taken
+  for one, and the drop was refused with "uses it too".
+
 ## [0.6.0] - 2026-10-03
 
 ### Upgrading from 0.5
@@ -78,13 +196,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carried over a bus or job library Tenantry.Pro has no integration for. `PropagatedTenant` is one of three outcomes:
   `Resolved(tenant)`, `WithoutTenant` or `Skipped`. `Use` runs work carried without a tenant as no tenant, even inside
   another tenant's flow, and refuses skipped work.
-- A public API for propagation adapters, which the Hangfire, MassTransit, Quartz.NET and Rebus integrations now use:
-  an `ITenantPropagationAdapter`, registered with `TenantPropagationAdapter.Add`, gets `TenantPropagationOptions` of its
-  own, the propagator and the integrations' startup check, which stops the application starting when its host side
-  never ran. Its host side marks `TenantPropagationIntegration<TAdapter>` wired and carries the tenant with its
-  `Propagator` and `Options`; `TenantPropagationAdapter.FormatTenantId` formats a tenant id for a `WithTenant` method.
-  The background jobs guide has an example. These types and the propagator are marked
-  `[EditorBrowsable(EditorBrowsableState.Advanced)]`, and the API reference lists them apart, as extension points.
+- A public API for propagation adapters, which the four integrations now use. Register an
+  `ITenantPropagationAdapter` with `TenantPropagationAdapter.Add`: it gets its own `TenantPropagationOptions`, the
+  propagator, and the startup check that fails the host when the adapter's host side never ran. The host side calls
+  `TenantPropagationIntegration<TAdapter>.MarkWired()` and carries the tenant with its `Propagator` and `Options`.
+  `TenantPropagationAdapter.FormatTenantId` formats an id for a `WithTenant` method. These types and the propagator
+  are `[EditorBrowsable(EditorBrowsableState.Advanced)]`, and the API reference lists them apart, as extension points;
+  the background jobs guide has an example.
 - Log events 4114 to 4117: a run that stopped early, a stop signal, a deployment step that could not start, and EF
   Core's diagnostic events being unobservable for a context.
 

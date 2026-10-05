@@ -1,5 +1,3 @@
-using Tenantry;
-
 namespace Tenantry.Pro.Samples.HangfireJobs;
 
 /// <summary>

@@ -12,7 +12,7 @@ public static class TenantryRecurringJobManagerExtensions
 
 ### `AddOrUpdateForEachTenant<T>(IRecurringJobManager, string, Expression<Action<T>>, string, RecurringJobOptions?)`
 
-Adds or updates a recurring job that, each time it is due, enqueues `methodCall` once for each tenant in the store, and each of those jobs runs as its tenant (`pro.AddHangfirePropagation()`).
+Adds or updates a recurring job that, each time it is due, enqueues `methodCall` once for each active tenant in the store, and each of those jobs runs as its tenant (`pro.AddHangfirePropagation()`).
 
 ```csharp
 public static void AddOrUpdateForEachTenant<T>(this IRecurringJobManager manager, string recurringJobId, Expression<Action<T>> methodCall, string cronExpression, RecurringJobOptions? options = null)
@@ -32,7 +32,7 @@ Parameters:
 
 The recurring job itself runs without a tenant, whatever `OnMissingTenant` is: it reads every tenant     from the store (`ITenantLookup`) and enqueues one job for each, so each tenant's job is retried     and shown on its own. If the store cannot be read, the recurring job fails and Hangfire retries it.
 
-The tenants' jobs go to the default queue, or the one a `QueueAttribute` on the method names.     The recurring job does not check a tenant's status, so a job must skip a tenant your application has     suspended.
+The tenants' jobs go to the default queue, or the one a `QueueAttribute` on the method names.     A tenant that `ValidateTenantActivity` refuses gets no job.
 
 ```csharp
 recurringJobs.AddOrUpdateForEachTenant<ReportJob>("nightly-reports", job => job.ExecuteAsync(), Cron.Daily());
@@ -40,7 +40,7 @@ recurringJobs.AddOrUpdateForEachTenant<ReportJob>("nightly-reports", job => job.
 
 ### `AddOrUpdateForEachTenant<T>(IRecurringJobManager, string, Expression<Func<T, Task>>, string, RecurringJobOptions?)`
 
-Adds or updates a recurring job that, each time it is due, enqueues `methodCall` once for each tenant in the store, and each of those jobs runs as its tenant (`pro.AddHangfirePropagation()`).
+Adds or updates a recurring job that, each time it is due, enqueues `methodCall` once for each active tenant in the store, and each of those jobs runs as its tenant (`pro.AddHangfirePropagation()`).
 
 ```csharp
 public static void AddOrUpdateForEachTenant<T>(this IRecurringJobManager manager, string recurringJobId, Expression<Func<T, Task>> methodCall, string cronExpression, RecurringJobOptions? options = null)
@@ -60,7 +60,7 @@ Parameters:
 
 The recurring job itself runs without a tenant, whatever `OnMissingTenant` is: it reads every tenant     from the store (`ITenantLookup`) and enqueues one job for each, so each tenant's job is retried     and shown on its own. If the store cannot be read, the recurring job fails and Hangfire retries it.
 
-The tenants' jobs go to the default queue, or the one a `QueueAttribute` on the method names.     The recurring job does not check a tenant's status, so a job must skip a tenant your application has     suspended.
+The tenants' jobs go to the default queue, or the one a `QueueAttribute` on the method names.     A tenant that `ValidateTenantActivity` refuses gets no job.
 
 ```csharp
 recurringJobs.AddOrUpdateForEachTenant<ReportJob>("nightly-reports", job => job.ExecuteAsync(), Cron.Daily());

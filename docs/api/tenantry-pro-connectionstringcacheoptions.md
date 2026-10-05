@@ -12,10 +12,12 @@ public sealed class ConnectionStringCacheOptions
 
 ### `Duration`
 
-How long a tenant's connection string is reused before the connection-string delegates are called again. Defaults to 30 minutes. It must be positive, or the application does not start.
+How long a tenant's connection string is reused before the connection-string delegates are called again. Defaults to 30 minutes.
 
 ```csharp
 public TimeSpan Duration { get; set; }
 ```
 
 Value: `TimeSpan`
+
+It must be positive, or the application does not start.

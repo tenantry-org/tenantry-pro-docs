@@ -1,5 +1,4 @@
 using Tenantry;
-using Tenantry.Pro;
 using Tenantry.Pro.Samples.BackgroundWorker;
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -13,6 +12,9 @@ builder.Services.AddTenantry<string>(tenant =>
         new Tenant { TenantId = "globex", Name = "Globex" },
         new Tenant { TenantId = "initech", Name = "Initech", IsActive = false },
     ]);
+
+    // Work runs only for active tenants: the sweep skips initech.
+    tenant.ValidateTenantActivity(t => t.As<Tenant>().IsActive);
 
     // UsePro reads the licence key from the Tenantry:License setting.
     tenant.UsePro();

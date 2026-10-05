@@ -1,8 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
-using Tenantry;
-using Tenantry.Pro;
 
 namespace Tenantry.Pro.Samples.TenantLifecycle;
 
@@ -52,7 +50,7 @@ public sealed partial class TenantOnboarding(
     public async Task<TenantProvisioningResult<string>?> RetryAsync(string tenantId, CancellationToken ct) =>
         await catalog.Tenants.FindAsync([tenantId], ct) is { } tenant ? await ProvisionAsync(tenant, ct) : null;
 
-    /// <summary>Suspends a tenant: its requests are refused from now on.</summary>
+    /// <summary>Suspends a tenant: its requests are refused and its background work skipped from now on.</summary>
     public async Task<bool> SuspendAsync(string tenantId, CancellationToken ct)
     {
         if (await catalog.Tenants.FindAsync([tenantId], ct) is not { } tenant)

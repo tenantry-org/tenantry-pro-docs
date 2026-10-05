@@ -41,16 +41,16 @@ Tenantry counts the ones Rebus.ServiceProvider adds; a bus you configure without
 
 ## Behaviour
 
-The tenant's id is carried in the `TenantPropagation.HeaderName` header (`tenantry-tenant-id`). The handlers trust
-the header as it is: only let producers you control send to these queues, or check in the handler that the tenant
-may send the message.
+The tenant's id is carried in the `TenantPropagation.HeaderName` header (`tenantry-tenant-id`). The tenant it names is
+read from the store and checked against `ValidateTenantActivity` before the handlers run, but the header itself is not
+authenticated: only let producers you control send to these queues, or check in the handler that the tenant may send
+the message.
 
 | Scenario | Outgoing (send/publish) | Incoming (handle) |
 |----------|-------------------------|-------------------|
 | A tenant is current | Header added | The handlers run as that tenant |
 | No tenant is current | No header | `OnMissingTenant` applies (default `Warn`: the handlers run without a tenant, and a warning is logged) |
-| The header names a tenant not in the store, or is not a valid id | — | `OnUnresolvedTenant` applies (default `Reject`: the message fails) |
-| Tenant that `ValidateTenantActivity` refuses | Header added | As a tenant the store does not have: `OnUnresolvedTenant` applies ([Suspended tenants](background-jobs.md#suspended-tenants)) |
+| The header names a tenant not in the store or a suspended one, or is not a valid id | Not applicable | `OnUnresolvedTenant` applies (default `Reject`: the message fails, with `TenantNotFoundException` or `TenantInactiveException`) ([Jobs and messages without a tenant](background-jobs.md#jobs-and-messages-without-a-tenant)) |
 | Message sent with a tenant in its headers (`WithTenant`) | Header kept | The handlers run as that tenant, whichever tenant was current when it was sent |
 
 While the handlers run as their tenant, their logs carry a `TenantId` scope, and the trace span they run in, if
@@ -77,11 +77,10 @@ Tenantry reserves for "no tenant" (`Guid.Empty`, `0`, an empty string).
 
 ## Messages without a tenant, or with one that cannot be found
 
-Two settings decide what happens to an incoming message whose tenant cannot be made current:
-
-- `OnMissingTenant`: the message carries no tenant. Default `Warn`.
-- `OnUnresolvedTenant`: the message carries a tenant id that the store does not have, or that is not a valid id of
-  the key type. Default `Reject`, so the message is never handled as no tenant.
+`OnMissingTenant` (default `Warn`) and `OnUnresolvedTenant` (default `Reject`) decide what happens to an incoming
+message whose tenant cannot be made current
+([Jobs and messages without a tenant](background-jobs.md#jobs-and-messages-without-a-tenant)). Set them for Rebus
+when you add it:
 
 ```csharp
 using Tenantry.Pro;
@@ -89,22 +88,12 @@ using Tenantry.Pro;
 pro.AddRebusPropagation(o => o.OnMissingTenant = TenantPropagationBehavior.Skip);
 ```
 
-| `TenantPropagationBehavior` | Effect |
-|-------------------------|--------|
-| `Allow` | Run the handlers without a tenant, silently. |
-| `Warn` | Run the handlers without a tenant, and log a warning. |
-| `Skip` | Do not run the handlers, and log a warning. Rebus acknowledges the message, so it is dropped. |
-| `Reject` | Throw `TenantNotResolvedException` (`TenantNotFoundException` for a tenant the store does not have). Rebus retries the message, then moves it to the error queue. |
-
-The incoming step runs just before Rebus deserializes the message, inside Rebus's retry step. A `Reject`, or a
-tenant store that throws, is retried and then moves the message to the error queue like any other failure, and
-the store lookup is cancelled when the bus stops. A pipeline customised to drop Rebus's
-`DeserializeIncomingMessageStep` makes the bus fail to start, rather than run handlers outside their tenant.
-Steps Rebus runs before deserializing run without the tenant: loading a data bus attachment
+The incoming step runs just before Rebus deserializes the message, inside Rebus's retry step, so a tenant store that
+throws is retried like any other failure, and the store lookup is cancelled when the bus stops. A pipeline customised
+to drop Rebus's `DeserializeIncomingMessageStep` makes the bus fail to start, rather than run handlers outside their
+tenant. Steps Rebus runs before deserializing run without the tenant: loading a data bus attachment
 (`HydrateIncomingMessageStep`) and, with `EnableEncryption`, decrypting the message. A data bus storage or an
 encryption key provider cannot depend on the message's tenant.
-
-The same settings exist on every Tenantry.Pro integration, each set separately.
 
 ## Accessing the tenant inside a handler
 

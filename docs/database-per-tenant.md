@@ -1,24 +1,25 @@
 # Database per tenant
 
-Each tenant gets a database of its own. A tenant's queries run against its own database, so there is no shared table
-and no row filter to get wrong. Use it when tenants must be backed up, restored or placed apart.
+Each tenant gets a database of its own. A tenant's queries run against its own database, so there is no shared table,
+and your entities need no tenant column. Tenantry Core's query filter still applies to an entity that implements
+`ITenantEntity<TKey>`. Use it when tenants must be backed up, restored or placed apart.
 
 ## What Tenantry provides
 
 Tenantry Core (free) connects each tenant to its database:
 
-- `UseConnectionStrings` — your delegate that returns a tenant's connection string, read through
+- `UseConnectionStrings`: your delegate that returns a tenant's connection string, read through
   `ITenantConnectionStringProvider<TKey>`.
-- `AddDbContextPerTenantDatabase<TContext>` (in `Tenantry.EfCore`) — registers your `DbContext`, pooled or not, and
+- `AddDbContextPerTenantDatabase<TContext>` (in `Tenantry.EfCore`): registers your `DbContext`, pooled or not, and
   connects each one to the current tenant's database.
 
 Tenantry.Pro adds what running many databases takes:
 
-- **Caching** of connection strings, for a delegate that reads a secrets store (`pro.CacheConnectionStrings()`).
-- **Provisioning**: creating a new tenant's database, migrating it and seeding it in one call (see
-  [Tenant lifecycle](tenant-lifecycle.md)).
-- **Migrations** for every tenant database (see [Tenant migrations](migration-orchestration.md)).
-- **Health checks** for every tenant database (see [Health checks](health-checks.md)).
+- Caching of connection strings, for a delegate that reads a secrets store (`pro.CacheConnectionStrings()`).
+- Provisioning: creating a new tenant's database, migrating it and seeding it in one call
+  ([Tenant lifecycle](tenant-lifecycle.md)).
+- Migrations for every tenant database ([Tenant migrations](migration-orchestration.md)).
+- Health checks for every tenant database ([Health checks](health-checks.md)).
 
 ## Registration
 
@@ -34,7 +35,7 @@ builder.Services.AddTenantry<string>(tenant =>
         opts.GetConnectionString = t =>
             $"Server=.;Database=app_{t.TenantId};Integrated Security=true;TrustServerCertificate=True");
 
-    tenant.UsePro(pro => pro.AddDatabaseProvisioning<AppDbContext>());   // optional — see "Provisioning" below
+    tenant.UsePro(pro => pro.AddDatabaseProvisioning<AppDbContext>());   // optional: see "Provisioning a new tenant" below
 
     // Connects each AppDbContext to the current tenant's database. Configure the provider without a
     // connection string.
@@ -42,11 +43,16 @@ builder.Services.AddTenantry<string>(tenant =>
 });
 ```
 
-The `GetConnectionString` delegate receives the resolved `ITenantDescriptor<TKey>` — use
+The `GetConnectionString` delegate receives the resolved `ITenantDescriptor<TKey>`: use
 `t.TenantId`, `t.Name`, or your own tenant type's properties with `t.As<AppTenant>()`
 ([your own tenant type](https://github.com/tenantry-org/tenantry-core/blob/master/docs/core-concepts.md#your-own-tenant-type)). It is called when each
 `DbContext` is created, unless caching is on, so it must be fast and deterministic: compute the string from the
 tenant's properties, and use the async delegate and caching (below) for external lookups.
+
+A database name built from a `string` id is compared by the server: SQL Server's default collation ignores case, and
+MySQL ignores it on Windows and macOS, so `app_acme` and `app_ACME` can be one database. Give each tenant an id that
+differs from every other in more than case
+([String tenant ids and the database's collation](https://github.com/tenantry-org/tenantry-core/blob/master/docs/efcore-integration.md#string-tenant-ids-and-the-databases-collation)).
 
 ## Resolving connection strings
 
@@ -94,11 +100,20 @@ a connection string is expensive (an external lookup).
 - It wraps the connection-string provider that `UseConnectionStrings` registers (before or after `UsePro`), or one
   you register before `UsePro`, so every reader is cached. With no provider the application does not start. A
   provider registered after `UsePro` replaces the cache, and a warning at startup says so.
-- When a tenant's connection details change, invalidate the tenant with Tenantry core's
-  `ITenantInvalidator<TKey>.InvalidateAsync(tenantId)`, which clears its connection string with everything else Tenantry
-  keeps for it, or only its connection string with `IConnectionStringCache<TKey>.Invalidate(tenantId)`.
-  Their `InvalidateAllAsync()` and `InvalidateAll()` clear every tenant's, after rotating every tenant's credentials. A connection string
-  read while you invalidate is not cached.
+- When a tenant's connection details change, call Tenantry Core's `ITenantInvalidator<TKey>.InvalidateAsync(tenantId)`.
+  It clears the tenant's connection string with everything else Tenantry caches for it, including the cached
+  descriptor (`CacheTenants`) that a delegate such as `t => t.As<AppTenant>().ConnectionString` reads. After rotating
+  every tenant's credentials, call `InvalidateAllAsync()`. A connection string read during invalidation is not cached.
+- Once a tenant has been invalidated, the cache computes its connection string from the store's copy of the tenant,
+  read through `ITenantLookup<TKey>` (from the `CacheTenants` cache when there is one), so a request or job that read
+  the tenant before the invalidation does not put the old connection string back. When an older copy of the same
+  tenant is current, the store's copy is current while the connection string is read, for a provider that reads
+  `ITenantContext<TKey>.CurrentTenant` instead of the descriptor it is passed. A tenant the store does not have
+  (made current with `MakeCurrent`, or since removed) is read from the descriptor the caller passes.
+- When the store cannot be read, the connection string is read from the caller's descriptor and not cached, and a
+  warning is logged (event 3302); for the next 5 seconds the tenant's connection string is read the same way, without
+  asking the store. On a miss for an invalidated tenant that `CacheTenants` does not have, the
+  synchronous `Get()` blocks its thread while the store is read; `GetAsync()` awaits the read.
 - `Duration` must be positive, or the application does not start. `TimeSpan.MaxValue` caches until you invalidate.
 - Caching does not change which reads work: with only `GetConnectionStringAsync`, `Get()` throws even when the
   cache holds the tenant's connection string.
@@ -108,7 +123,7 @@ a connection string is expensive (an external lookup).
 EF Core keeps a pooled context's connection string when the context returns to the pool, so the next
 lease would silently use the previous tenant's database. Tenantry Core's `AddDbContextPerTenantDatabase` (in
 `Tenantry.EfCore`) pools contexts safely with a database per tenant when you pass `pooled: true`: configure the
-provider **without** a connection string, and each lease is connected to the current tenant's database. It uses
+provider without a connection string, and each lease is connected to the current tenant's database. It uses
 the same `ITenantConnectionStringProvider`, so Pro's caching applies.
 
 ```csharp
@@ -135,8 +150,7 @@ on SQLite, SQL Server, PostgreSQL and MySQL.
 ## Provisioning a new tenant
 
 `AddDatabaseProvisioning<TContext>()` adds creating the tenant's database to tenant provisioning, as its first
-step. It does **not** run automatically — Tenantry.Pro never creates databases on first request. Add the tenant
-to your store, then provision it:
+step. Add the tenant to your store, then provision it:
 
 ```csharp
 using Tenantry;
@@ -149,10 +163,9 @@ public sealed class TenantAdminService(ITenantProvisioner<string> provisioner)
 }
 ```
 
-The `CreateDatabase` step resolves `TContext` in the tenant's scope, so with `AddDbContextPerTenantDatabase`
-the context is connected to the tenant's database, and creates that database through the EF Core provider's
-own database creator, unless it exists. So it works with whichever provider the context uses. Migrations and
-seeders run after it, in the same call; see [Tenant lifecycle](tenant-lifecycle.md) and
+The `CreateDatabase` step resolves `TContext` in the tenant's scope, so with `AddDbContextPerTenantDatabase` it
+reaches the tenant's database. It creates that database, unless it exists, through the provider's own database
+creator. Migrations and seeders run after it in the same call; see [Tenant lifecycle](tenant-lifecycle.md) and
 [Database providers](database-providers.md).
 
 Calls for the same tenant at the same time (a double submit, a redelivered message) all succeed: a call whose
@@ -198,15 +211,12 @@ tenant's database when it is provisioned. See [Tenant migrations](migration-orch
 
 ## Limitations
 
-- The `GetConnectionString` delegate must be deterministic and fast; use `GetConnectionStringAsync` +
-  caching for anything that hits the network.
-- Provisioning and migration are explicit (or opt-in at startup) — never implicit on first request.
 - Provisioning needs a relational EF Core provider; SQL Server 2022, PostgreSQL 16 and MySQL 8.4 are tested
   ([Database providers](database-providers.md)).
 
 ## See also
 
 - [Tenant migrations](migration-orchestration.md) · [Tenant lifecycle](tenant-lifecycle.md)
-- [Health checks](health-checks.md) — probe every tenant database for connectivity and pending migrations.
-- [Mixed mode](mixed-mode.md) — some tenants on their own database, others sharing.
+- [Health checks](health-checks.md): probe every tenant database for connectivity and pending migrations.
+- [Mixed mode](mixed-mode.md): some tenants on their own database, others sharing.
 - [Database providers](database-providers.md)

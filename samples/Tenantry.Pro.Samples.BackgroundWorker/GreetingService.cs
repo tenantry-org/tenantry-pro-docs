@@ -1,5 +1,3 @@
-using Tenantry;
-
 namespace Tenantry.Pro.Samples.BackgroundWorker;
 
 /// <summary>
@@ -16,7 +14,8 @@ public sealed class GreetingService(ITenantContext<string> tenantContext)
 }
 
 /// <summary>
-/// The application's own tenant type: Tenantry keeps no status, so a suspended tenant is one the application marks.
+/// The application's own tenant type: Tenantry keeps no status, so a suspended tenant is one the application marks,
+/// and <c>ValidateTenantActivity</c> in Program.cs tells Tenantry which those are.
 /// </summary>
 public sealed class Tenant : TenantDescriptor<string>
 {

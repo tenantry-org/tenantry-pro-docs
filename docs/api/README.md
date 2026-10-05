@@ -17,19 +17,18 @@ the pieces fit together; this reference is for the details of each type and memb
 | Type | Kind | Summary |
 |------|------|---------|
 | [`ConnectionStringCacheOptions`](tenantry-pro-connectionstringcacheoptions.md) | class | How tenants' connection strings are cached. Set with `pro.CacheConnectionStrings(o => ...)`. |
-| [`IConnectionStringCache<TKey>`](tenantry-pro-iconnectionstringcache.md) | interface | Removes cached connection strings, so the next read calls the connection-string delegates again. |
-| [`IProBuilder`](tenantry-pro-iprobuilder.md) | interface | The builder `UsePro` passes to its configuration callback, without the tenant key type. A feature that takes a type parameter of its own, such as a `DbContext` type, can register through [`IProBuilder.Add`](tenantry-pro-iprobuilder.md), so its callers never repeat the key type. |
+| [`IProBuilder`](tenantry-pro-iprobuilder.md) | interface | The builder `UsePro` passes to its configuration callback, without the tenant key type. |
 | [`IProBuilder<TKey>`](tenantry-pro-iprobuilder-1.md) | interface | The builder `UsePro` passes to its configuration callback. |
 | [`IProRegistration`](tenantry-pro-iproregistration.md) | interface | A registration that needs the tenant key type, added through [`IProBuilder.Add`](tenantry-pro-iprobuilder.md). Packages use it for builder methods that take a type parameter of their own, such as a `DbContext` type. |
-| [`ITenantDeprovisioner<TKey>`](tenantry-pro-itenantdeprovisioner.md) | interface | Offboards a tenant, the reverse of [`ITenantProvisioner<TKey>`](tenantry-pro-itenantprovisioner.md): runs the deprovisioning steps and reports each one. Registered by `UsePro`, as a singleton. |
+| [`ITenantDeprovisioner<TKey>`](tenantry-pro-itenantdeprovisioner.md) | interface | Offboards a tenant, the reverse of [`ITenantProvisioner<TKey>`](tenantry-pro-itenantprovisioner.md): runs the deprovisioning steps and reports each one. |
 | [`ITenantDeprovisioningStep<TKey>`](tenantry-pro-itenantdeprovisioningstep.md) | interface | A step of offboarding a tenant ([`ITenantDeprovisioner<TKey>`](tenantry-pro-itenantdeprovisioner.md)): export its data, archive it, tell another system. Add one with [`IProBuilder<TKey>.AddDeprovisioningStep<TStep>`](tenantry-pro-iprobuilder-1.md); the application's steps run before Tenantry drops anything. |
-| [`ITenantProvisioner<TKey>`](tenantry-pro-itenantprovisioner.md) | interface | Provisions a new tenant: runs every [`ITenantProvisioningStep<TKey>`](tenantry-pro-itenantprovisioningstep.md) for it, in order, and reports each step's outcome. `UsePro` registers it, as a singleton. |
+| [`ITenantProvisioner<TKey>`](tenantry-pro-itenantprovisioner.md) | interface | Provisions a new tenant: runs every [`ITenantProvisioningStep<TKey>`](tenantry-pro-itenantprovisioningstep.md) for it, in order, and reports each step's outcome. |
 | [`ITenantProvisioningStep<TKey>`](tenantry-pro-itenantprovisioningstep.md) | interface | A step [`ITenantProvisioner<TKey>`](tenantry-pro-itenantprovisioner.md) runs to provision a tenant. Add one with [`IProBuilder<TKey>.AddProvisioningStep<TStep>`](tenantry-pro-iprobuilder-1.md). |
-| [`ITenantSeeder<TKey>`](tenantry-pro-itenantseeder.md) | interface | Writes a new tenant's initial data, as a step of provisioning ([`ITenantProvisioner<TKey>`](tenantry-pro-itenantprovisioner.md)). Add one with [`IProBuilder<TKey>.AddSeeder<TSeeder>`](tenantry-pro-iprobuilder-1.md): seeders and the steps you add run after Tenantry.Pro's own steps, in the order you add them. |
+| [`ITenantSeeder<TKey>`](tenantry-pro-itenantseeder.md) | interface | Writes a new tenant's initial data, as a step of provisioning ([`ITenantProvisioner<TKey>`](tenantry-pro-itenantprovisioner.md)). |
 | [`LicenseRequiredException`](tenantry-pro-licenserequiredexception.md) | class | Thrown when no Tenantry.Pro licence key is configured, or the configured key is invalid (malformed, a bad signature, or not a Tenantry.Pro licence): when the application starts, and by licence-guarded operations. |
 | [`MixedModeOptions<TKey>`](tenantry-pro-mixedmodeoptions.md) | class | Mixed mode: tenants with different isolation in one application. Set with `pro.UseMixedMode(o => o.GetIsolation = ...)`. |
-| [`PeriodicTenantBackgroundService<TKey>`](tenantry-pro-periodictenantbackgroundservice.md) | class | Base class for a hosted service that performs work for every tenant on a recurring interval. The first sweep runs at startup, then again every [`PeriodicTenantBackgroundService<TKey>.Interval`](tenantry-pro-periodictenantbackgroundservice.md). Each tenant is processed inside its own scope with per-tenant failure isolation (see [`TenantBackgroundService<TKey>`](tenantry-pro-tenantbackgroundservice.md)). |
-| [`TenantBackgroundService<TKey>`](tenantry-pro-tenantbackgroundservice.md) | class | Base class for a hosted service that does work for every active tenant once, then completes. Each tenant's work runs in its own scope, with a log scope with `TenantId` open on [`TenantBackgroundService<TKey>.Logger`](tenantry-pro-tenantbackgroundservice.md). A tenant that fails is logged and the others go on; a tenant `ValidateTenantActivity` refuses is skipped. |
+| [`PeriodicTenantBackgroundService<TKey>`](tenantry-pro-periodictenantbackgroundservice.md) | class | Base class for a hosted service that does work for every active tenant at startup, then again every [`PeriodicTenantBackgroundService<TKey>.Interval`](tenantry-pro-periodictenantbackgroundservice.md). |
+| [`TenantBackgroundService<TKey>`](tenantry-pro-tenantbackgroundservice.md) | class | Base class for a hosted service that does work for every active tenant once, then completes. |
 | [`TenantDeprovisioningContext<TKey>`](tenantry-pro-tenantdeprovisioningcontext.md) | class | What a deprovisioning step works with: the tenant being offboarded, a scope of its own, and its isolation. |
 | [`TenantDeprovisioningResult<TKey>`](tenantry-pro-tenantdeprovisioningresult.md) | class | The outcome of offboarding a tenant: a result for each deprovisioning step, in the order they ran. |
 | [`TenantIsolation`](tenantry-pro-tenantisolation.md) | enum | Where a tenant's data lives, in mixed mode ([`MixedModeOptions<TKey>.GetIsolation`](tenantry-pro-mixedmodeoptions.md)). |
@@ -47,25 +46,11 @@ For code that extends the package, such as another package that builds on it. An
 
 | Type | Namespace | Kind | Summary |
 |------|-----------|------|---------|
-| [`ITenantPropagationAdapter`](tenantry-pro-itenantpropagationadapter.md) | `Tenantry.Pro` | interface | A tenant-propagation adapter for a job or messaging library: what the startup check needs to know of it. Tenantry.Pro's Hangfire, MassTransit, Quartz.NET and Rebus integrations implement it, and so can an adapter of your own for another library. Register it with [`TenantPropagationAdapter.Add<TKey, TAdapter>`](tenantry-pro-tenantpropagationadapter.md), which gives it its [`TenantPropagationOptions`](tenantry-pro-tenantpropagationoptions.md), the propagator, and the startup check. |
-| [`ITenantPropagator`](tenantry-pro-itenantpropagator.md) | `Tenantry.Pro` | interface | Carries the tenant into jobs and messages, with tenant ids as text, so a transport needs no tenant key type. Tenantry.Pro's Hangfire, MassTransit, Quartz.NET and Rebus integrations use it; use it to carry the tenant over another bus or job library. `UsePro` registers it as a singleton. |
+| [`ITenantPropagationAdapter`](tenantry-pro-itenantpropagationadapter.md) | `Tenantry.Pro` | interface | A tenant-propagation adapter for a job or messaging library: what the startup check needs to know of it. |
+| [`ITenantPropagator`](tenantry-pro-itenantpropagator.md) | `Tenantry.Pro` | interface | Carries the tenant into jobs and messages, with tenant ids as text, so a transport needs no tenant key type. |
 | [`PropagatedTenant`](tenantry-pro-propagatedtenant.md) | `Tenantry.Pro` | struct | What [`ITenantPropagator`](tenantry-pro-itenantpropagator.md) resolved for a job or message: a tenant to run as ([`PropagatedTenant.Resolved`](tenantry-pro-propagatedtenant.md)), no tenant ([`PropagatedTenant.WithoutTenant`](tenantry-pro-propagatedtenant.md)), or that the work must not run ([`PropagatedTenant.Skipped`](tenantry-pro-propagatedtenant.md)). |
 | [`TenantPropagationAdapter`](tenantry-pro-tenantpropagationadapter.md) | `Tenantry.Pro` | class | Registers a tenant-propagation adapter ([`ITenantPropagationAdapter`](tenantry-pro-itenantpropagationadapter.md)) for its `pro.Add…Propagation()` method, as Tenantry.Pro's Hangfire, MassTransit, Quartz.NET and Rebus integrations do, and formats the tenant ids its `WithTenant` methods take. |
 | [`TenantPropagationIntegration<TAdapter>`](tenantry-pro-tenantpropagationintegration.md) | `Tenantry.Pro` | class | A tenant-propagation adapter as [`TenantPropagationAdapter.Add<TKey, TAdapter>`](tenantry-pro-tenantpropagationadapter.md) registered it: its options, the propagator, and how many times its host side has run. |
-
-## Tenantry.Pro.AspNetCore
-
-### `Microsoft.Extensions.DependencyInjection`
-
-| Type | Kind | Summary |
-|------|------|---------|
-| [`TenantryProAspNetCoreBuilderExtensions`](microsoft-extensions-dependencyinjection-tenantryproaspnetcorebuilderextensions.md) | class | Registers Tenantry.Pro's ASP.NET Core features on [`IProBuilder<TKey>`](tenantry-pro-iprobuilder-1.md). |
-
-### `Tenantry.Pro.AspNetCore`
-
-| Type | Kind | Summary |
-|------|------|---------|
-| [`TenantMetricsOptions<TKey>`](tenantry-pro-aspnetcore-tenantmetricsoptions.md) | class | How requests are tagged with their tenant. Set with `pro.AddTenantMetrics(o => ...)`. |
 
 ## Tenantry.Pro.EfCore
 

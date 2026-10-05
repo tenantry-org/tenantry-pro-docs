@@ -69,4 +69,4 @@ Parameters:
 
 - `tenant` `ITenantDescriptor`: The tenant, an `ITenantDescriptor<TKey>` of the application's tenant key type.
 
-Returns: [`PropagatedTenant`](tenantry-pro-propagatedtenant.md): The result to pass to [`ITenantPropagator.Use`](tenantry-pro-itenantpropagator.md).
+Returns: [`PropagatedTenant`](tenantry-pro-propagatedtenant.md): The result to pass to [`ITenantPropagator.MakeCurrent`](tenantry-pro-itenantpropagator.md).

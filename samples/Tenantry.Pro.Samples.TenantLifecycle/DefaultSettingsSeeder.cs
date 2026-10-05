@@ -1,7 +1,5 @@
 using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
-using Tenantry;
-using Tenantry.Pro;
 
 namespace Tenantry.Pro.Samples.TenantLifecycle;
 

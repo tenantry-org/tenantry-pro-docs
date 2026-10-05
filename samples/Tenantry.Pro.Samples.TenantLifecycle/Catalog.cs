@@ -1,7 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
-using Tenantry;
 
 namespace Tenantry.Pro.Samples.TenantLifecycle;
 

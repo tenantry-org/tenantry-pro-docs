@@ -12,7 +12,7 @@ public static class TenantryProEfCoreBuilderExtensions
 
 ### `AddAuditLogging<TKey>(IProBuilder<TKey>, Action<AuditOptions>?)`
 
-Audit logging: records the changes every context that uses `UseTenantry()` saves, as [`AuditEntry`](tenantry-pro-efcore-auditentry.md) values with the current tenant, and passes them to [`IAuditStore`](tenantry-pro-efcore-iauditstore.md): by default once they are committed ([`AuditOptions.Timing`](tenantry-pro-efcore-auditoptions.md)). The default store writes each entry to the log; register your own [`IAuditStore`](tenantry-pro-efcore-iauditstore.md), with any lifetime, to replace it.
+Audit logging: records the changes every context that uses `UseTenantry()` saves, as [`AuditEntry`](tenantry-pro-efcore-auditentry.md) values with the current tenant, and passes them to [`IAuditStore`](tenantry-pro-efcore-iauditstore.md): by default once they are committed ([`AuditOptions.Timing`](tenantry-pro-efcore-auditoptions.md)).
 
 ```csharp
 [RequiresUnreferencedCode("EF Core reads entity types and their properties through reflection, which trimming can break. See https://aka.ms/efcore-docs-trimming.")]
@@ -31,7 +31,9 @@ Parameters:
 
 Returns: [`IProBuilder<TKey>`](tenantry-pro-iprobuilder-1.md): The same `pro` for chaining.
 
-Nothing is added to the contexts: `UseTenantry()` adds the audit interceptor, after Tenantry's own, so     a new tenant-owned entity is recorded with its tenant. A context that does not use `UseTenantry()` is     not audited, nor are the saves the store makes.
+Nothing is added to the contexts: `UseTenantry()` adds the audit interceptor, after Tenantry's own, so     a new tenant-owned entity is recorded with its tenant. A context that does not use `UseTenantry()` is     not audited, nor are the saves the store makes. Only `SaveChanges` is audited: `ExecuteUpdate`,     `ExecuteDelete` and raw SQL are not recorded.
+
+The default store writes each entry to the log; register your own [`IAuditStore`](tenantry-pro-efcore-iauditstore.md), with any     lifetime, to replace it.
 
 By default ([`AuditTiming.AfterCommit`](tenantry-pro-efcore-audittiming.md)) the entries of changes saved in a transaction are     written when it commits, a `Database.BeginTransaction` transaction (shared with other contexts through     `UseTransaction` or not), a `TransactionScope` or an enlisted one, and discarded if it rolls back.     A store failure is then logged, as the changes are committed, or thrown as an     [`AuditStoreException`](tenantry-pro-efcore-auditstoreexception.md) ([`AuditOptions.OnStoreFailure`](tenantry-pro-efcore-auditoptions.md)). With     [`AuditTiming.InTransaction`](tenantry-pro-efcore-audittiming.md) the store is called inside the transaction, so it can write through     the same connection and transaction, and its failure is thrown from `SaveChanges`.
 
@@ -127,7 +129,7 @@ tenant.UsePro(pro => pro.AddMigrations<AppDbContext>());
 
 ### `AddSchemaDeprovisioning<TContext>(IProBuilder, Action<SchemaDeprovisioningOptions<TContext>>?)`
 
-Adds dropping each tenant's schema to offboarding ([`ITenantDeprovisioner<TKey>`](tenantry-pro-itenantdeprovisioner.md)), as the `DropSchema` step, after the application's deprovisioning steps and `DeleteSharedData`: its foreign keys, tables (the migration history among them) and sequences, then the schema, in one transaction, in the database `TContext` connects to for the tenant. In mixed mode it applies only to [`TenantIsolation.Schema`](tenantry-pro-tenantisolation.md) tenants.
+Adds dropping each tenant's schema to offboarding ([`ITenantDeprovisioner<TKey>`](tenantry-pro-itenantdeprovisioner.md)), as the `DropSchema` step, after the application's deprovisioning steps and `DeleteSharedData`. In mixed mode it applies only to [`TenantIsolation.Schema`](tenantry-pro-tenantisolation.md) tenants.
 
 ```csharp
 [RequiresUnreferencedCode("EF Core reads entity types and their properties through reflection, which trimming can break. See https://aka.ms/efcore-docs-trimming.")]
@@ -146,7 +148,7 @@ Parameters:
 
 Returns: [`IProBuilder`](tenantry-pro-iprobuilder.md): The same builder, without its key type: in a chain, call it after methods that need the key type.
 
-It needs `pro.UseSchemaPerTenant(...)`: without it, the application does not start. It is refused when another tenant on the same database uses the schema (its schema is that one, or its model maps anything into it, directly or through its connection's default schema), when the schema is the database's default schema, and when another tenant's context cannot be created, or what it uses read, to check. A schema that does not exist counts as dropped. Objects other than tables and sequences (views, functions) stay, and dropping the schema then fails: drop them in a deprovisioning step of your own.
+The step drops the schema's foreign keys, tables (the migration history among them) and sequences, then the schema, in one transaction, in the database `TContext` connects to for the tenant. It needs `pro.UseSchemaPerTenant(...)`: without it, the application does not start. It is refused when another tenant on the same database uses the schema (its schema is that one, or its model maps anything into it, directly or through its connection's default schema), when the schema is the database's default schema, and when another tenant's context cannot be created, or what it uses read, to check. A schema that does not exist counts as dropped. Objects other than tables and sequences (views, functions) stay, and dropping the schema then fails: drop them in a deprovisioning step of your own.
 
 ### `AddSchemaProvisioning<TContext>(IProBuilder, Action<SchemaProvisioningOptions<TContext>>?)`
 
@@ -173,7 +175,7 @@ It needs `pro.UseSchemaPerTenant(...)`: without it, the application does not sta
 
 ### `AddSharedDataDeletion<TContext>(IProBuilder)`
 
-Adds deleting a tenant's rows from the shared database to offboarding ([`ITenantDeprovisioner<TKey>`](tenantry-pro-itenantdeprovisioner.md)), as the `DeleteSharedData` step, after the application's deprovisioning steps and before any drop: every row of `TContext`'s tenant-owned entities (`ITenantEntity<TKey>`) with the tenant's id, table by table, rows that reference another's first, in one transaction. In mixed mode it applies to [`TenantIsolation.Shared`](tenantry-pro-tenantisolation.md) tenants, and to [`TenantIsolation.Schema`](tenantry-pro-tenantisolation.md) tenants when schema per tenant leaves `TContext` in the shared schema ([`SchemaPerTenantOptions<TKey>.Contexts`](tenantry-pro-efcore-schemapertenantoptions.md)), and to [`TenantIsolation.Database`](tenantry-pro-tenantisolation.md) tenants unless `AddDatabaseDeprovisioning` drops `TContext`'s database.
+Adds the `DeleteSharedData` offboarding step ([`ITenantDeprovisioner<TKey>`](tenantry-pro-itenantdeprovisioner.md)): deletes the tenant's rows from every tenant-owned table (`ITenantEntity<TKey>`) of `TContext`, in one transaction, after the application's steps and before any drop.
 
 ```csharp
 [RequiresUnreferencedCode("EF Core reads entity types and their properties through reflection, which trimming can break. See https://aka.ms/efcore-docs-trimming.")]
@@ -191,7 +193,9 @@ Parameters:
 
 Returns: [`IProBuilder`](tenantry-pro-iprobuilder.md): The same builder, without its key type: in a chain, call it after methods that need the key type.
 
-Rows of tables that cascade from those (owned types in tables of their own, many-to-many links) go with them, through the database's cascades. A table that is not tenant-owned and references a tenant's row makes the delete fail, and nothing is deleted; so does a cycle of references between tenant-owned tables, and a context with no tenant-owned table. Add the context once for each database whose rows go.
+In mixed mode it applies to [`TenantIsolation.Shared`](tenantry-pro-tenantisolation.md) tenants; to     [`TenantIsolation.Schema`](tenantry-pro-tenantisolation.md) tenants when schema per tenant does not give     `TContext` the tenant's schema ([`SchemaPerTenantOptions<TKey>.Contexts`](tenantry-pro-efcore-schemapertenantoptions.md));     and to [`TenantIsolation.Database`](tenantry-pro-tenantisolation.md) tenants unless     `AddDatabaseDeprovisioning<TContext>` drops `TContext`'s database.
+
+Tables are cleared one by one, those whose rows reference another table first. Rows of tables that cascade     from those (owned types in tables of their own, many-to-many links) go with them, through the database's     cascades. A table that is not tenant-owned and references a tenant's row makes the delete fail, and nothing     is deleted; so does a cycle of references between tenant-owned tables, and a context with no tenant-owned     table. Add the context once for each database whose rows go. The deletes are raw SQL, so audit logging does     not record them.
 
 ```csharp
 tenant.UsePro(pro => pro.AddSharedDataDeletion<AppDbContext>());

@@ -16,7 +16,7 @@ public sealed class TenantMigrationOptions<TContext> where TContext : DbContext
 
 ### `CreateContext`
 
-Creates the context migrations are applied through, from the tenant's scope, where the tenant is current. Use it to connect with credentials allowed to change the schema, when the application's own are not; the context is disposed after use. When not set, the context is the application's `TContext` from the tenant's scope, as a request gets it, or, when that cannot be created or has no connection string yet (only an asynchronous one), one from its `IDbContextFactory<TContext>`.
+Creates the context migrations are applied through, from the tenant's scope, where the tenant is current. Use it to connect with credentials allowed to change the schema, when the application's own are not.
 
 ```csharp
 public Func<IServiceProvider, TContext>? CreateContext { get; set; }
@@ -24,7 +24,7 @@ public Func<IServiceProvider, TContext>? CreateContext { get; set; }
 
 Value: `Func<IServiceProvider, TContext>`
 
-A run creates each tenant's context to find the database and schema it connects to, then creates it again for the first tenant of each to migrate it.
+The context is disposed after use. When not set, the context is the application's `TContext` from the tenant's scope, as a request gets it, or, when that cannot be created or has no connection string yet (only an asynchronous one), one from its `IDbContextFactory<TContext>`. A run creates each tenant's context to find the database and schema it connects to, then creates it again for the first tenant of each to migrate it.
 
 ### `CreateMissingDatabases`
 

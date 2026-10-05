@@ -100,13 +100,15 @@ A property of a complex type (`ComplexProperty`) is named by its path, as `Addre
 
 ### `PrimaryKey`
 
-A string representation of the entity's primary key value(s), each in the invariant culture: a date or time to the tick (`2026-10-02T13:04:05.1230000`), a byte array in hexadecimal (`0x0102`), and a value-converted key that cannot be formatted so, such as a strongly typed id, as the value it is stored as. Composite keys are comma-separated. [null](https://learn.microsoft.com/dotnet/csharp/language-reference/keywords/null) when no primary key is defined.
+The entity's primary key value(s) as text, comma-separated for a composite key, or [null](https://learn.microsoft.com/dotnet/csharp/language-reference/keywords/null) when no primary key is defined.
 
 ```csharp
 public required string? PrimaryKey { get; init; }
 ```
 
 Value: `string`
+
+Each value is formatted in the invariant culture: a date or time to the tick (`2026-10-02T13:04:05.1230000`), a byte array in hexadecimal (`0x0102`), and a value-converted key that cannot be formatted so, such as a strongly typed id, as the value it is stored as.
 
 ### `TableName`
 

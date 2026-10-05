@@ -4,7 +4,9 @@ Namespace: `Tenantry.Pro` · Package: `Tenantry.Pro` · [API reference](README.m
 
 An extension point: for code that extends the package, such as another package that builds on it. An application rarely needs it.
 
-A tenant-propagation adapter as [`TenantPropagationAdapter.Add<TKey, TAdapter>`](tenantry-pro-tenantpropagationadapter.md) registered it: its options, the propagator, and how many times its host side has run. Resolve it in the adapter's host side, mark it wired, and give it to the library's filters. Registered as a singleton.
+A tenant-propagation adapter as [`TenantPropagationAdapter.Add<TKey, TAdapter>`](tenantry-pro-tenantpropagationadapter.md) registered it: its options, the propagator, and how many times its host side has run.
+
+Resolve it in the adapter's host side, call [`TenantPropagationIntegration<TAdapter>.MarkWired`](tenantry-pro-tenantpropagationintegration.md), and give it to the library's filters. It is registered as a singleton.
 
 ```csharp
 public static ConsumerBuilder<string, string> UseTenantry(this ConsumerBuilder<string, string> consumer, IServiceProvider services)

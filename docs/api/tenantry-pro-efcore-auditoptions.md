@@ -12,13 +12,15 @@ public sealed class AuditOptions
 
 ### `OnStoreFailure`
 
-What happens when the store fails to write the entries of changes that are already saved, with [`AuditTiming.AfterCommit`](tenantry-pro-efcore-audittiming.md): the failure is logged ([`AuditStoreFailureBehavior.Log`](tenantry-pro-efcore-auditstorefailurebehavior.md), the default) or thrown as an [`AuditStoreException`](tenantry-pro-efcore-auditstoreexception.md) ([`AuditStoreFailureBehavior.Throw`](tenantry-pro-efcore-auditstorefailurebehavior.md)). With [`AuditTiming.InTransaction`](tenantry-pro-efcore-audittiming.md) the store's failure is always thrown, as it is.
+What happens when the store fails to write the entries of changes that are already saved, with [`AuditTiming.AfterCommit`](tenantry-pro-efcore-audittiming.md): the failure is logged ([`AuditStoreFailureBehavior.Log`](tenantry-pro-efcore-auditstorefailurebehavior.md), the default) or thrown as an [`AuditStoreException`](tenantry-pro-efcore-auditstoreexception.md) ([`AuditStoreFailureBehavior.Throw`](tenantry-pro-efcore-auditstorefailurebehavior.md)).
 
 ```csharp
 public AuditStoreFailureBehavior OnStoreFailure { get; set; }
 ```
 
 Value: [`AuditStoreFailureBehavior`](tenantry-pro-efcore-auditstorefailurebehavior.md)
+
+With [`AuditTiming.InTransaction`](tenantry-pro-efcore-audittiming.md) the store's failure is always thrown, as it is.
 
 ### `ShouldAudit`
 
@@ -50,7 +52,7 @@ Value: [`AuditTiming`](tenantry-pro-efcore-audittiming.md)
 
 ### `ExcludeProperty<TEntity>(Expression<Func<TEntity, object?>>)`
 
-Leaves a property out of every entry of `TEntity`, and of types derived from it: its value is not copied, and it is not in [`AuditEntry.OldValues`](tenantry-pro-efcore-auditentry.md), [`AuditEntry.NewValues`](tenantry-pro-efcore-auditentry.md) or [`AuditEntry.ChangedProperties`](tenantry-pro-efcore-auditentry.md). A key property still makes up [`AuditEntry.PrimaryKey`](tenantry-pro-efcore-auditentry.md). An update that changes only excluded properties is not recorded. Naming the navigation to an owned type (`OwnsOne`, `OwnsMany`) leaves out the entities owned through it, and naming a complex property (`ComplexProperty`, `ComplexCollection`) leaves out its values.
+Leaves a property out of every entry of `TEntity`, and of types derived from it: its value is not copied, and it is not in [`AuditEntry.OldValues`](tenantry-pro-efcore-auditentry.md), [`AuditEntry.NewValues`](tenantry-pro-efcore-auditentry.md) or [`AuditEntry.ChangedProperties`](tenantry-pro-efcore-auditentry.md).
 
 ```csharp
 public AuditOptions ExcludeProperty<TEntity>(Expression<Func<TEntity, object?>> property)
@@ -69,6 +71,8 @@ Returns: [`AuditOptions`](tenantry-pro-efcore-auditoptions.md): The same options
 Exceptions:
 
 - `ArgumentException`: `property` is not a member of `TEntity` itself (a nested member, a method call).
+
+A key property still makes up [`AuditEntry.PrimaryKey`](tenantry-pro-efcore-auditentry.md). An update that changes only excluded properties is not recorded. Naming the navigation to an owned type (`OwnsOne`, `OwnsMany`) leaves out the entities owned through it, and naming a complex property (`ComplexProperty`, `ComplexCollection`) leaves out its values.
 
 ```csharp
 opts.ExcludeProperty<User>(user => user.PasswordHash);

@@ -1,5 +1,4 @@
 using Quartz;
-using Tenantry;
 
 namespace Tenantry.Pro.Samples.QuartzScheduling;
 

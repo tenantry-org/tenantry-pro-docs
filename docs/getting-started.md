@@ -1,9 +1,9 @@
 # Getting started
 
-This guide builds a working **database-per-tenant** ASP.NET Core app on SQL Server end to end:
-resolve the tenant, give each tenant its own database, provision new databases on demand, and set up
-migrations across every tenant database, run as a deployment step. Schema-per-tenant and the other providers follow the same shape — see the
-[schema-per-tenant](schema-per-tenant.md) and [database providers](database-providers.md) guides.
+This guide builds a database-per-tenant ASP.NET Core app on SQL Server: resolve the tenant, give each tenant its own
+database, provision new databases, and migrate every tenant database as a deployment step. Schema per tenant and the
+other providers follow the same shape; see [Schema per tenant](schema-per-tenant.md) and
+[Database providers](database-providers.md).
 
 ## 1. Install the packages
 
@@ -18,18 +18,14 @@ dotnet add package Tenantry.Pro.EfCore             # provisioning, migrations, h
 dotnet add package Microsoft.EntityFrameworkCore.SqlServer
 ```
 
-| If you need… | Add |
-|--------------|-----|
-| Schema per tenant | `Tenantry.Pro.EfCore` |
-| PostgreSQL / MySQL | the EF Core provider (`Npgsql.EntityFrameworkCore.PostgreSQL`, or [a MySQL provider](database-providers.md#mysql--mariadb)) in place of SQL Server's |
-| Audit logging | `Tenantry.Pro.EfCore` |
-| Health checks | `Tenantry.Pro.EfCore` |
-| Per-tenant request metrics | `Tenantry.Pro.AspNetCore` |
+`Tenantry.Pro.EfCore` also covers schema per tenant, audit logging and health checks. For PostgreSQL or MySQL, add
+that EF Core provider in place of SQL Server's (`Npgsql.EntityFrameworkCore.PostgreSQL`, or
+[a MySQL provider](database-providers.md#mysql)).
 
 ## 2. Define your tenant store and `DbContext`
 
-The tenant **store** is Tenantry core's concept — it answers "which tenants exist?". A production app
-typically backs it with a database; here is the shape:
+The tenant store, from Tenantry core, says which tenants exist. A production application usually backs it with a
+database; here is the shape:
 
 ```csharp
 using Tenantry;
@@ -54,8 +50,8 @@ public sealed class MyTenantStore : ITenantStore<string>
 > ([why](migration-orchestration.md#which-tenants-are-migrated)). Stop work for a suspended tenant with Tenantry
 > Core's `ValidateTenantActivity` instead ([Suspended tenants](background-jobs.md#suspended-tenants)).
 
-Your `DbContext` is a plain EF Core context — with database-per-tenant the connection string already
-points at the right database, so no per-tenant code is needed inside it:
+Your `DbContext` is a plain EF Core context. With a database per tenant the connection string already points at the
+tenant's database, so the context needs no per-tenant code:
 
 ```csharp
 public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
@@ -144,8 +140,8 @@ environment, production included. See [Licensing](licensing.md).
 
 ## Where to go next
 
-- **Schema isolation instead of separate databases** → [Schema per tenant](schema-per-tenant.md)
-- **Mix dedicated and shared tenants** → [Mixed mode](mixed-mode.md)
-- **Create + migrate + seed new tenants in one call** → [Tenant lifecycle](tenant-lifecycle.md)
-- **PostgreSQL or MySQL** → [Database providers](database-providers.md)
-- **No ASP.NET Core (worker/console)** → [Background jobs & non-HTTP hosts](background-jobs.md)
+- [Schema per tenant](schema-per-tenant.md): a schema per tenant in one database.
+- [Mixed mode](mixed-mode.md): dedicated and shared tenants in one application.
+- [Tenant lifecycle](tenant-lifecycle.md): create, migrate and seed a tenant in one call.
+- [Database providers](database-providers.md): PostgreSQL and MySQL.
+- [Background jobs & non-HTTP hosts](background-jobs.md): workers and console applications.

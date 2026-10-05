@@ -5,9 +5,9 @@ provider, so it needs no external database.
 
 Demonstrates:
 
-- `pro.AddAuditLogging()` — records the insert/update/delete changes of every context that uses
+- `pro.AddAuditLogging()`: records the insert/update/delete changes of every context that uses
   `UseTenantry()`, with the current tenant id, once they are committed.
-- `options.UseTenantry()` — isolates the context's tenant-owned entities, and with audit logging audits its saves.
+- `options.UseTenantry()`: isolates the context's tenant-owned entities, and with audit logging audits its saves.
 - A custom `IAuditStore` (here `InMemoryAuditStore`) registered after `AddAuditLogging()` to replace
   the default logging store.
 

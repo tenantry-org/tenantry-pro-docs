@@ -5,8 +5,8 @@ using Microsoft.EntityFrameworkCore.Design;
 namespace Tenantry.Pro.Samples.DatabasePerTenantSqlServer;
 
 /// <summary>
-/// Application DbContext. With database-per-tenant the connection string already
-/// points at the correct database — no schema switching required here.
+/// Application DbContext. With a database per tenant, the connection string already
+/// names the tenant's database, so the context sets no schema.
 /// </summary>
 public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {

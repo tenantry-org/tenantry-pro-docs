@@ -24,10 +24,9 @@ Keys do not expire, so a key that worked keeps working. Reading migration status
 
 `CurrentTenantConnectionString<TKey>.Get()` was called with no tenant in scope.
 
-- In ASP.NET Core, ensure `app.UseTenantry()` runs **before** anything that resolves a connection
-  string, and that the request actually carries a resolvable tenant (e.g. the `X-Tenant-Id` header).
-- In a worker/console host there is no request — open a scope first with
-  `ITenantScopeFactory<TKey>`. See [Background jobs & non-HTTP hosts](background-jobs.md).
+- In ASP.NET Core, check that `app.UseTenantry()` runs before anything that resolves a connection string, and that
+  the request carries a tenant that resolves (the `X-Tenant-Id` header, say).
+- In a worker or console host there is no request: open a scope first with `ITenantScopeFactory<TKey>`. See [Background jobs & non-HTTP hosts](background-jobs.md).
 
 ## `Get()` throws but `GetAsync()` works, or a context "cannot open a connection synchronously"
 
@@ -86,24 +85,30 @@ With schema per tenant, the context `AddMigrations(o => o.CreateContext = …)` 
 or its migrations would go to the database's default schema. Build its options with
 `UseApplicationServiceProvider(sp)` and `UseTenantry()`, as in [Tenant migrations](migration-orchestration.md#registration).
 
+## The application does not start: "…but its options do not call UseTenantry()"
+
+`pro.UseSchemaPerTenant(...)` gives a context the tenant's schema through `UseTenantry()`. A context listed in
+`SchemaPerTenantOptions.Contexts`, or every registered context when none is listed, was registered without it, so
+each tenant would use the database's default schema. Add `.UseTenantry()` to the context's options, as in
+[Schema per tenant](schema-per-tenant.md#registration). `migrate-tenants` returns 3 for the same reason. If the
+context that gets the schema is one you build yourself and do not register, list its type in
+`SchemaPerTenantOptions.Contexts`: the check with none listed looks only at registered contexts.
+
 ## A captive-dependency error mentioning `ITenantStore`
 
-A singleton tried to inject the (scoped) tenant store directly. Inject
-`ITenantLookup<TKey>` instead — it resolves the store from a fresh scope per call. This is the
-correct dependency for hosted services and any custom singleton that enumerates tenants. See
-[Background jobs & non-HTTP hosts](background-jobs.md).
+A singleton injected the scoped tenant store. Inject `ITenantLookup<TKey>` instead, which resolves the store in a new
+scope for each call. See [Background jobs & non-HTTP hosts](background-jobs.md).
 
 ## Trim/AOT analyzer warnings (IL2026, IL3050)
 
-Expected where you call Tenantry.Pro.EfCore: every public method that configures, creates or reads an EF Core
-context or model, or runs migrations, is annotated `[RequiresUnreferencedCode]` and `[RequiresDynamicCode]`, as
-Tenantry.EfCore's are. EF Core relies on reflection and code built at run time, so these are **not** Native
-AOT-compatible. `Tenantry.Pro` and `Tenantry.Pro.AspNetCore` (licensing, connection-string caching, mixed mode,
-tenant provisioning, telemetry) are trim- and AOT-compatible: an app over them publishes
-with `PublishAot` without warnings. Provisioning runs migrations only when `AddMigrations` registered them, so its
-warning appears at that call. If you publish with
-`PublishTrimmed`/`PublishAot`, leave the EF Core features out, or suppress the warnings where you have
-accepted the constraint.
+Expected where you call Tenantry.Pro.EfCore: every public method that configures, creates or reads an EF Core context
+or model, or runs migrations, is annotated `[RequiresUnreferencedCode]` and `[RequiresDynamicCode]`, as
+Tenantry.EfCore's are. EF Core relies on reflection and code built at run time, so these are not Native
+AOT-compatible. `Tenantry.Pro` (licensing, connection-string caching, mixed mode, tenant provisioning, propagation) is
+trim- and AOT-compatible: an app over it publishes with `PublishAot` without warnings. Provisioning runs migrations
+only when `AddMigrations` registered them, so its warning appears at that call. If you publish with
+`PublishTrimmed`/`PublishAot`, leave the EF Core features out, or suppress the warnings where you have accepted the
+constraint.
 
 ## `TenantNotFoundException` when migrating, or missing tables after reactivating a tenant
 
@@ -118,16 +123,9 @@ status (Unhealthy, if you set it so, or Degraded on an endpoint that maps it to 
 database is unreachable. Keep probes to process-level checks and serve the tenant checks on a separate
 monitoring endpoint (see [Health checks](health-checks.md#exposing-the-checks)).
 
-## Requests have no `tenant.id` tag
-
-- Only a tenant `app.UseTenantry()` resolves is tagged. A request without a tenant is not tagged: an endpoint that allows a missing tenant, or a request
-  rejected before its tenant was resolved. Nor is a tenant for which your `GetTagValue` returns `null`.
-- The tag is on ASP.NET Core's `http.server.request.duration`, not on `http.server.active_requests`. Make
-  sure your collector listens to the `Microsoft.AspNetCore.Hosting` meter. See [Telemetry](telemetry.md).
-
 ## A background job / consumer runs without a tenant
 
-Jobs enqueued or messages published while **no** tenant is current carry no tenant, so by default they run
+Jobs enqueued or messages published while no tenant is current carry no tenant, so by default they run
 without one (logging a warning). Enqueue, publish or send while a tenant is current, or name the tenant
 (`jobs.WithTenant(id)` for Hangfire, `context.WithTenant(id)` for MassTransit, `headers.WithTenant(id)` for Rebus,
 `WithTenant(id)` in a Quartz.NET job's data). For work every tenant needs on a schedule, use Hangfire's
@@ -140,7 +138,5 @@ the message names to the host library's configuration: `config.UseTenantry(sp)` 
 names more than one bus, make the call in each bus's configuration.
 
 `OnMissingTenant` (default `Warn`) and `OnUnresolvedTenant` (default `Reject`) decide what happens to a job or
-message whose tenant cannot be made current, for example
-`pro.AddHangfirePropagation(o => o.OnMissingTenant = TenantPropagationBehavior.Reject)`. Each integration's guide
-lists what `Skip` and `Reject` do there: [Hangfire](hangfire.md), [MassTransit](masstransit.md),
-[Quartz.NET](quartz.md), [Rebus](rebus.md).
+message whose tenant cannot be made current
+([Jobs and messages without a tenant](background-jobs.md#jobs-and-messages-without-a-tenant)).

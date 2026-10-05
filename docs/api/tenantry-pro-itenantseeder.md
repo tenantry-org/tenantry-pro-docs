@@ -2,7 +2,9 @@
 
 Namespace: `Tenantry.Pro` · Package: `Tenantry.Pro` · [API reference](README.md)
 
-Writes a new tenant's initial data, as a step of provisioning ([`ITenantProvisioner<TKey>`](tenantry-pro-itenantprovisioner.md)). Add one with [`IProBuilder<TKey>.AddSeeder<TSeeder>`](tenantry-pro-iprobuilder-1.md): seeders and the steps you add run after Tenantry.Pro's own steps, in the order you add them. A seeder registered only in the service collection is not run.
+Writes a new tenant's initial data, as a step of provisioning ([`ITenantProvisioner<TKey>`](tenantry-pro-itenantprovisioner.md)).
+
+Add one with [`IProBuilder<TKey>.AddSeeder<TSeeder>`](tenantry-pro-iprobuilder-1.md): seeders and the steps you add run after     Tenantry.Pro's own steps, in the order you add them. A seeder registered only in the service collection is     not run.
 
 A seeder is resolved from a new scope for the tenant being provisioned, so it can take scoped services such     as a `DbContext` in its constructor, and they read and write as that tenant.
 

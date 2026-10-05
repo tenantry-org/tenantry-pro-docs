@@ -1,12 +1,12 @@
 # Health checks
 
-`Tenantry.Pro.EfCore` adds ASP.NET Core health checks that probe **every** tenant database: one verifies
+`Tenantry.Pro.EfCore` adds ASP.NET Core health checks that probe every tenant database: one verifies
 connectivity, the other reports pending EF Core migrations. Both go through your own `DbContext`, created in each
 tenant's scope as your application creates it, read each database (or schema) once however many tenants share it,
 and report per-tenant detail in the health check data dictionary.
 
-> **For monitoring, not liveness or readiness.** One unreachable tenant database fails the check on every replica
-> at once. The checks report Degraded, which ASP.NET Core returns as `200`, so map Degraded to `503` on a separate,
+> Use these checks for monitoring, not for liveness or readiness: one unreachable tenant database fails the check on
+> every replica at once. The checks report Degraded, which ASP.NET Core returns as `200`, so map Degraded to `503` on a separate,
 > protected endpoint ([below](#exposing-the-checks)).
 
 ## Registration
@@ -20,9 +20,10 @@ builder.Services.AddHealthChecks()
     .AddTenantMigrationCheck<AppDbContext>();    // every tenant database or schema has every migration applied
 ```
 
-The checks need Tenantry (`AddTenantry`); without it they report their failure status, saying so. They get the context from each tenant's scope, as a request does (or from its `IDbContextFactory<TContext>` when it
-cannot be created there; see [Tenant migrations](migration-orchestration.md#registration)), so register it so that a
-tenant's scope gives the tenant's own database: Tenantry core's `AddDbContextPerTenantDatabase`, or a context with
+The checks need Tenantry (`AddTenantry`); without it they report their failure status, saying so. They get the
+context from each tenant's scope, as a request does (or from its `IDbContextFactory<TContext>` when it cannot be
+created there; see [Tenant migrations](migration-orchestration.md#registration)), so register it so that a tenant's
+scope gives the tenant's own database: Tenantry core's `AddDbContextPerTenantDatabase`, or a context with
 `UseTenantry()` and schema per tenant. Both take the standard health check arguments, and options:
 
 ```csharp
@@ -47,36 +48,36 @@ database (tenants whose context has the same connection string share it, whateve
 
 | Condition | Status |
 |-----------|--------|
-| All tenant databases reachable | **Healthy** |
-| One or more unreachable | `failureStatus`, **Degraded** by default (data lists which tenants failed and why) |
-| No tenants registered | **Healthy** ("No tenants.") |
+| All tenant databases reachable | Healthy |
+| One or more unreachable | `failureStatus`, Degraded by default (data lists which tenants failed and why) |
+| No tenants registered | Healthy ("No tenants.") |
 
-Each tenant's entry in the data (`tenant:{id}`, the id formatted with the invariant culture) is `reachable`, or `unreachable:` and the provider's error. A tenant
-whose context cannot be created, because its connection string cannot be read, say, counts as unreachable.
+Each tenant's entry in the data (`tenant:{id}`, the id formatted with the invariant culture) is `reachable`, or
+`unreachable:` and the provider's error. A tenant whose context cannot be created, because its connection string cannot be read, say, counts as unreachable.
 
 ## Migration check
 
-`AddTenantMigrationCheck<TContext>` reads each tenant's pending migrations, once for each distinct database and
-schema (as the [migration runner](migration-orchestration.md#running-migrations) tells them apart), with the context the [migration runner](migration-orchestration.md) uses: as `pro.AddMigrations<TContext>()`
-creates it, if you called it, otherwise as your application registers it.
+`AddTenantMigrationCheck<TContext>` reads each distinct database's or schema's pending migrations, grouped and
+connected as the [migration runner](migration-orchestration.md#running-migrations) does: through `AddMigrations`'
+`CreateContext` if you set it, otherwise through your registered context.
 
 | Condition | Status |
 |-----------|--------|
-| All tenant databases or schemas up to date | **Healthy** |
-| One or more have pending migrations, or could not be read | `failureStatus`, **Degraded** by default |
+| All tenant databases or schemas up to date | Healthy |
+| One or more have pending migrations, or could not be read | `failureStatus`, Degraded by default |
 
 Each tenant's entry in the data is `up to date`, the number and names of its pending migrations, or `error:` and why
 they could not be read. The check is named `tenant-migrations` and tagged `tenantry` and `migrations` by default.
 
 ## What the checks cover
 
-- **Every tenant the store lists**, suspended or still provisioning ones included
+- They cover every tenant the store lists, suspended or still provisioning ones included
   ([why](migration-orchestration.md#which-tenants-are-migrated)). A tenant whose database does not exist yet shows as
   unreachable, with every migration pending.
-- **How often they read the databases.** Each check keeps its result for `CacheDuration` (30 seconds by default),
+- Each check keeps its result for `CacheDuration` (30 seconds by default),
   and polls that arrive while it runs wait for that run, so a monitor polling every few seconds does not reach every
   tenant database each time. Set it to zero to check on every request.
-- **How long a check takes.** Each check reads the first tenant's database alone, then up to `MaxConcurrency` at a
+- Each check reads the first tenant's database alone, then up to `MaxConcurrency` at a
   time, and waits up to `DatabaseTimeout` for each. With every database unreachable a check takes about
   (1 + (databases − 1) ÷ `MaxConcurrency`) × `DatabaseTimeout`; the check's `timeout` (30 seconds by default) ends it
   sooner, as a failure. The two checks run at once. Allow for your tenant count in the monitor's timeout.
@@ -108,7 +109,7 @@ app.MapHealthChecks("/health/tenants", new HealthCheckOptions
 
 Do not tag the tenant checks `ready`. If you call `RequireTenantByDefault()`, add
 `.AllowMissingTenant()` to each endpoint, or requests without a tenant get `400`. On ASP.NET Core 9 and later,
-`.DisableHttpMetrics()` keeps an endpoint out of the request metrics (see [Telemetry](telemetry.md#cardinality)).
+`.DisableHttpMetrics()` keeps an endpoint out of ASP.NET Core's request metrics.
 
 ### Protect the monitoring endpoint
 

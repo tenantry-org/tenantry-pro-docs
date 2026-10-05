@@ -18,13 +18,15 @@ Implements `IEquatable<MigrationResult<TKey>>`.
 
 ### `AppliedMigrations`
 
-The migrations whose history row this run committed, in order; empty when there was nothing to apply. A migration another process applied is never listed. After a failure it lists those committed before it, which depends on the EF Core version and database (the Tenant migrations guide's failure model); check with [`TenantMigrationRunnerExtensions.GetTenantStatusAsync<TKey>`](tenantry-pro-efcore-tenantmigrationrunnerextensions.md).
+The migrations in the database's history after the run that were not in it before, in order; empty when there was nothing to apply.
 
 ```csharp
 public required IReadOnlyList<string> AppliedMigrations { get; init; }
 ```
 
 Value: `IReadOnlyList<string>`
+
+The history does not say who applied a migration, so when another runner applies migrations to the same database while this one runs, a migration may be listed in either result, or in both. After a failure it lists those committed before it, which depends on the EF Core version and database (the Tenant migrations guide's failure model); check with [`TenantMigrationRunnerExtensions.GetTenantStatusAsync<TKey>`](tenantry-pro-efcore-tenantmigrationrunnerextensions.md).
 
 ### `Attempted`
 

@@ -24,7 +24,7 @@ public static class TenantPropagationAdapter
 
 ### `Add<TKey, TAdapter>(IProBuilder<TKey>, string, Action<TenantPropagationOptions>?)`
 
-Registers `TAdapter`, and [`TenantPropagationIntegration<TAdapter>`](tenantry-pro-tenantpropagationintegration.md) with its options, named `name` and configured by `configure`, as singletons; the propagator for the key type, which `UsePro` registers too; and the check that fails the host's start if the adapter's host side never ran ([`ITenantPropagationAdapter`](tenantry-pro-itenantpropagationadapter.md)).
+Registers `TAdapter`, its [`TenantPropagationIntegration<TAdapter>`](tenantry-pro-tenantpropagationintegration.md) and named options, the propagator, and the check that fails the host's start if the adapter's host side never ran ([`ITenantPropagationAdapter`](tenantry-pro-itenantpropagationadapter.md)).
 
 ```csharp
 public static void Add<TKey, TAdapter>(IProBuilder<TKey> pro, string name, Action<TenantPropagationOptions>? configure = null) where TKey : IEquatable<TKey>, IParsable<TKey> where TAdapter : class, ITenantPropagationAdapter
@@ -46,7 +46,7 @@ Exceptions:
 - `ArgumentNullException`: `pro` or `name` is null.
 - `ArgumentException`: `name` is empty or white space.
 
-Calling it again for the same adapter adds `configure` to the same options, and registers nothing more. Options with a [`TenantPropagationBehavior`](tenantry-pro-tenantpropagationbehavior.md) that is not defined stop the host from starting with `OptionsValidationException`.
+The adapter and its integration are singletons; `UsePro` registers the propagator too. Calling it again for the same adapter adds `configure` to the same options, and registers nothing more. Options with a [`TenantPropagationBehavior`](tenantry-pro-tenantpropagationbehavior.md) that is not defined stop the host from starting with `OptionsValidationException`.
 
 ### `FormatTenantId<TKey>(TKey, string?)`
 

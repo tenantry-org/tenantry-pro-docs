@@ -35,7 +35,7 @@ Parameters:
 
 Returns: `IHealthChecksBuilder`: The same `builder` for chaining.
 
-For monitoring, not for liveness or readiness probes: one unreachable tenant database would fail the check on every replica at once, which is why it reports Degraded (ASP.NET Core answers Degraded with 200 unless the endpoint maps it otherwise). The data names tenants and gives database errors, so serve it only on a protected endpoint. It needs Tenantry.Pro (`UsePro` in `AddTenantry`).
+For monitoring, not for liveness or readiness probes: one unreachable tenant database would fail the check on every replica at once, which is why it reports Degraded (ASP.NET Core answers Degraded with 200 unless the endpoint maps it otherwise). The data names tenants and gives database errors, so serve it only on a protected endpoint. It needs Tenantry (`AddTenantry`); without it the check reports its failure status and says so.
 
 ```csharp
 builder.Services.AddHealthChecks().AddTenantDatabaseCheck<AppDbContext>();
@@ -66,4 +66,4 @@ Parameters:
 
 Returns: `IHealthChecksBuilder`: The same `builder` for chaining.
 
-The context is created as [`ITenantMigrationRunner<TKey>`](tenantry-pro-efcore-itenantmigrationrunner.md) creates it: as `pro.AddMigrations<TContext>()` configures it, if it was called, otherwise as the application registers it. For monitoring, not for liveness or readiness probes; the data names tenants, migrations and database errors, so serve it only on a protected endpoint. It needs Tenantry.Pro (`UsePro` in `AddTenantry`).
+The context is created as [`ITenantMigrationRunner<TKey>`](tenantry-pro-efcore-itenantmigrationrunner.md) creates it: as `pro.AddMigrations<TContext>()` configures it, if it was called, otherwise as the application registers it. For monitoring, not for liveness or readiness probes; the data names tenants, migrations and database errors, so serve it only on a protected endpoint. It needs Tenantry (`AddTenantry`); without it the check reports its failure status and says so.

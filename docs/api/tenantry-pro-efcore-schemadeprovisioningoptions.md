@@ -16,10 +16,12 @@ public sealed class SchemaDeprovisioningOptions<TContext> where TContext : DbCon
 
 ### `CreateContext`
 
-Creates the context the schema is dropped through, from the tenant's scope, where the tenant is current. Use it to connect with credentials allowed to drop schemas and their tables, when the application's own are not; the step disposes the context. It also creates each other tenant's context, to check none of them uses the schema. When not set, the context comes from the application's registration: its `IDbContextFactory<TContext>`, if it has one, otherwise `TContext` from the tenant's scope.
+Creates the context the schema is dropped through, from the tenant's scope, where the tenant is current. Use it to connect with credentials allowed to drop schemas and their tables, when the application's own are not.
 
 ```csharp
 public Func<IServiceProvider, TContext>? CreateContext { get; set; }
 ```
 
 Value: `Func<IServiceProvider, TContext>`
+
+It also creates each other tenant's context, to check none of them uses the schema. The step disposes the context. When not set, the step uses the application's `TContext` from the tenant's scope, as a request gets it. When that is not registered, or has no connection string yet (Tenantry Core reads an asynchronous one when the context first connects), it uses the application's `IDbContextFactory<TContext>`.

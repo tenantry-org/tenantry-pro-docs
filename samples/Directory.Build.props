@@ -5,7 +5,7 @@
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
         <IsPackable>false</IsPackable>
-        <TenantryProVersion>0.6.0</TenantryProVersion>
-        <TenantryCoreVersion>0.6.0</TenantryCoreVersion>
+        <TenantryProVersion>0.7.0</TenantryProVersion>
+        <TenantryCoreVersion>0.7.0</TenantryCoreVersion>
     </PropertyGroup>
 </Project>

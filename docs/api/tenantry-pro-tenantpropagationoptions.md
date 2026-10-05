@@ -22,7 +22,7 @@ Value: [`TenantPropagationBehavior`](tenantry-pro-tenantpropagationbehavior.md)
 
 ### `OnUnresolvedTenant`
 
-What happens to a job or message that carries a tenant id that is not a valid id of the tenant key type, or that the tenant store does not have (a tenant deleted since, or an id from another system). The default is [`TenantPropagationBehavior.Reject`](tenantry-pro-tenantpropagationbehavior.md): it fails, so the host's retry and error handling take over, and it never runs as no tenant.
+What happens to a job or message that carries a tenant id that is not a valid id of the tenant key type, that the tenant store does not have (a tenant deleted since, or an id from another system), or whose tenant `ValidateTenantActivity` refuses (a suspended one). The default is [`TenantPropagationBehavior.Reject`](tenantry-pro-tenantpropagationbehavior.md): it fails, so the host's retry and error handling take over, and it never runs as no tenant.
 
 ```csharp
 public TenantPropagationBehavior OnUnresolvedTenant { get; set; }

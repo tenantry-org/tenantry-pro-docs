@@ -8,8 +8,8 @@ Demonstrates:
 
 - A catalog: `CatalogDbContext` lists every tenant in its own database (`catalog`), with a status the application
   keeps (`Provisioning`, `Active`, `Suspended`). `CatalogTenantStore` is the tenant store over it
-  (`tenant.UseStore<CatalogTenantStore>()`), cached with `tenant.CacheTenants()`, and an access validator lets
-  requests use active tenants only.
+  (`tenant.UseStore<CatalogTenantStore>()`), cached with `tenant.CacheTenants()`, and
+  `tenant.ValidateTenantActivity(...)` lets requests and background work run for active tenants only.
 - Onboarding (`TenantOnboarding`): the tenant is added to the catalog first, as `Provisioning`, because the
   provisioner works on tenants in the store; once every step has succeeded it becomes `Active`, and is removed from
   the cache (`ITenantInvalidator<string>.InvalidateAsync`), where a request made during provisioning left it not active.

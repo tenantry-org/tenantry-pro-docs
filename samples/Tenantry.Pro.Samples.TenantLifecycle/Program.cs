@@ -21,8 +21,9 @@ builder.Services
         tenant.UseStore<CatalogTenantStore>();
         tenant.CacheTenants();
 
-        // Requests may use active tenants only: one still provisioning, or suspended, gets 403.
-        tenant.ValidateTenantAccess((_, t) => t is CatalogTenant { Status: TenantStatus.Active });
+        // Only active tenants get work: a request for one still provisioning, or suspended, gets 403, and background
+        // work skips it. Provisioning and offboarding still reach it.
+        tenant.ValidateTenantActivity(t => t.As<CatalogTenant>().Status == TenantStatus.Active);
 
         tenant.UseConnectionStrings(opts =>
             opts.GetConnectionString = t => $"{serverConnection};Database=app_{t.TenantId}");

@@ -49,16 +49,16 @@ start if any bus does not, and the error names the buses.
 
 ## Behaviour
 
-The tenant's id is carried in the `TenantPropagation.HeaderName` header (`tenantry-tenant-id`). The consumer trusts
-the header as it is: only let producers you control publish to these endpoints, or check in the consumer that the
-tenant may send the message.
+The tenant's id is carried in the `TenantPropagation.HeaderName` header (`tenantry-tenant-id`). The tenant it names
+is read from the store and checked against `ValidateTenantActivity` before the consumer runs, but the header itself is
+not authenticated: only let producers you control publish to these endpoints, or check in the consumer that the tenant
+may send the message.
 
 | Scenario | Publish / Send | Consume |
 |----------|---------------|---------|
 | A tenant is current | Header added | The consumer runs as that tenant |
 | No tenant is current | No header | `OnMissingTenant` applies (default `Warn`: the consumer runs without a tenant, and a warning is logged) |
-| The header names a tenant not in the store, or is not a valid id | — | `OnUnresolvedTenant` applies (default `Reject`: the message faults) |
-| Tenant that `ValidateTenantActivity` refuses | Header added | As a tenant the store does not have: `OnUnresolvedTenant` applies ([Suspended tenants](background-jobs.md#suspended-tenants)) |
+| The header names a tenant not in the store or a suspended one, or is not a valid id | Not applicable | `OnUnresolvedTenant` applies (default `Reject`: the message faults, with `TenantNotFoundException` or `TenantInactiveException`) ([Jobs and messages without a tenant](background-jobs.md#jobs-and-messages-without-a-tenant)) |
 
 A message a consumer publishes or sends carries the consumed message's tenant even when it is sent after the
 consumer returns, as MassTransit's in-memory outbox (`UseInMemoryOutbox`) sends it: MassTransit copies the consumed
@@ -149,26 +149,16 @@ public class OrderBatchConsumer : IConsumer<Batch<OrderPlaced>>
 
 ## Messages without a tenant, or with one that cannot be found
 
-Two settings decide what happens to a consumed message whose tenant cannot be made current:
-
-- `OnMissingTenant`: the message carries no tenant. Default `Warn`.
-- `OnUnresolvedTenant`: the message carries a tenant id that the store does not have, or that is not a valid id
-  of the key type. Default `Reject`, so the message is never consumed as no tenant.
+`OnMissingTenant` (default `Warn`) and `OnUnresolvedTenant` (default `Reject`) decide what happens to a consumed
+message whose tenant cannot be made current
+([Jobs and messages without a tenant](background-jobs.md#jobs-and-messages-without-a-tenant)). Set them for
+MassTransit when you add it:
 
 ```csharp
 using Tenantry.Pro;
 
 pro.AddMassTransitPropagation(o => o.OnMissingTenant = TenantPropagationBehavior.Skip);
 ```
-
-| `TenantPropagationBehavior` | Effect |
-|-------------------------|--------|
-| `Allow` | Run the consumer without a tenant, silently. |
-| `Warn` | Run the consumer without a tenant, and log a warning. |
-| `Skip` | Do not run the consumer, and log a warning. The message is not consumed, so MassTransit moves it to the endpoint's `_skipped` queue. (A routing slip faults instead: see [Routing slips](#routing-slips).) |
-| `Reject` | Throw `TenantNotResolvedException` (`TenantNotFoundException` for a tenant the store does not have). The message faults as if the consumer had thrown: your message retry policy applies, then MassTransit moves it to the endpoint's `_error` queue. |
-
-The same settings exist on every Tenantry.Pro integration, each set separately.
 
 ## Accessing the tenant inside a consumer
 

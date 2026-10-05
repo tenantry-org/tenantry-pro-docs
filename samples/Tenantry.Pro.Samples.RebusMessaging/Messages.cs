@@ -1,5 +1,4 @@
 using Rebus.Handlers;
-using Tenantry;
 
 namespace Tenantry.Pro.Samples.RebusMessaging;
 

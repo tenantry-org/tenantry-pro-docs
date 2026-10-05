@@ -25,7 +25,7 @@ Type parameters:
 Parameters:
 
 - `pro` [`IProBuilder<TKey>`](tenantry-pro-iprobuilder-1.md): The Pro builder.
-- `configure` `Action<TenantPropagationOptions>`: Sets what happens to a job that carries no tenant ([`TenantPropagationOptions.OnMissingTenant`](tenantry-pro-tenantpropagationoptions.md), Warn by default) or a tenant the store does not have ([`TenantPropagationOptions.OnUnresolvedTenant`](tenantry-pro-tenantpropagationoptions.md), Reject by default).
+- `configure` `Action<TenantPropagationOptions>`: Sets what happens to a job that carries no tenant ([`TenantPropagationOptions.OnMissingTenant`](tenantry-pro-tenantpropagationoptions.md), Warn by default) or a tenant the store does not have or `ValidateTenantActivity` refuses ([`TenantPropagationOptions.OnUnresolvedTenant`](tenantry-pro-tenantpropagationoptions.md), Reject by default).
 
 Returns: [`IProBuilder<TKey>`](tenantry-pro-iprobuilder-1.md): The same `pro` for chaining.
 

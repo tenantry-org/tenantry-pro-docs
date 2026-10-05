@@ -53,8 +53,7 @@ application.
 |----------|--------|
 | Job enqueued while a tenant is current | The job runs as that tenant |
 | Job enqueued with no tenant current | `OnMissingTenant` applies (default `Warn`: the job runs without a tenant, and a warning is logged) |
-| The job's tenant is not in the store, or its id is not a valid id | `OnUnresolvedTenant` applies (default `Reject`: the job fails, and Hangfire's retries apply) |
-| Tenant that `ValidateTenantActivity` refuses | As a tenant the store does not have: `OnUnresolvedTenant` applies ([Suspended tenants](background-jobs.md#suspended-tenants)) |
+| The job's tenant is not in the store, is suspended, or its id is not a valid id | `OnUnresolvedTenant` applies (default `Reject`: the job fails, with `TenantNotFoundException` or `TenantInactiveException`, and Hangfire's retries apply) ([Jobs and messages without a tenant](background-jobs.md#jobs-and-messages-without-a-tenant)) |
 | Job enqueued through `jobs.WithTenant(id)` | The job runs as that tenant, whichever tenant is current ([Enqueueing a job for a tenant](#enqueueing-a-job-for-a-tenant)) |
 | Recurring job (`RecurringJob.AddOrUpdate`) | Hangfire's scheduler creates each run outside any request, so it carries no tenant and `OnMissingTenant` applies to every run. For work per tenant, use `AddOrUpdateForEachTenant` ([Recurring jobs](#recurring-jobs)) |
 
@@ -85,11 +84,9 @@ Hangfire's own does, and refuses the id Tenantry reserves for "no tenant" (`Guid
 
 ## Jobs without a tenant, or with one that cannot be found
 
-Two settings decide what happens to a job whose tenant cannot be made current:
-
-- `OnMissingTenant`: the job carries no tenant. Default `Warn`.
-- `OnUnresolvedTenant`: the job carries a tenant id that the store does not have (a tenant deleted since it was
-  enqueued), or that is not a valid id of the key type. Default `Reject`, so the job never runs as no tenant.
+`OnMissingTenant` (default `Warn`) and `OnUnresolvedTenant` (default `Reject`) decide what happens to a job whose
+tenant cannot be made current ([Jobs and messages without a tenant](background-jobs.md#jobs-and-messages-without-a-tenant)).
+Set them for Hangfire when you add it:
 
 ```csharp
 using Tenantry.Pro;
@@ -100,19 +97,6 @@ pro.AddHangfirePropagation(o =>
     o.OnUnresolvedTenant = TenantPropagationBehavior.Skip;
 });
 ```
-
-| `TenantPropagationBehavior` | Effect |
-|-------------------------|--------|
-| `Allow` | Run the job without a tenant, silently. |
-| `Warn` | Run the job without a tenant, and log a warning. |
-| `Skip` | Do not run the job, and log a warning: Hangfire deletes it ("Canceled by filter"). |
-| `Reject` | Throw `TenantNotResolvedException` (`TenantNotFoundException` for a tenant the store does not have): Hangfire records the job as failed and applies its retry policy. |
-
-Use `Allow` for jobs that legitimately run without a tenant (global maintenance), and `Reject` or `Skip` to make
-a job enqueued without a tenant fail or drop rather than run without one. `Reject` and `Skip` also apply to
-recurring jobs added with `RecurringJob.AddOrUpdate`, which never have a tenant; one added with
-`AddOrUpdateForEachTenant` is not affected (see [Recurring jobs](#recurring-jobs)). The same settings exist on
-every Tenantry.Pro integration (MassTransit, Quartz.NET, Rebus), each set separately.
 
 ## Accessing the tenant inside a job
 

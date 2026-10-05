@@ -1,6 +1,5 @@
 using Microsoft.EntityFrameworkCore;
 using Tenantry;
-using Tenantry.Pro;
 using Tenantry.Pro.EfCore;
 using Tenantry.Pro.Samples.AuditLogging;
 

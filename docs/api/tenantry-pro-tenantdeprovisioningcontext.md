@@ -16,13 +16,15 @@ public sealed class TenantDeprovisioningContext<TKey> where TKey : IEquatable<TK
 
 ### `DataDropped`
 
-Whether the tenant's database or schema, which offboarding drops, no longer exists: an earlier offboarding that failed later dropped it, or it was never created. A step that reads the tenant's data should then do nothing: it ran in that earlier offboarding, before the drop.
+Whether every database or schema offboarding drops for the tenant no longer exists.
 
 ```csharp
 public bool DataDropped { get; init; }
 ```
 
 Value: `bool`
+
+It is [true](https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool) when an earlier offboarding that failed later dropped them, or they were never created. A step that reads the tenant's data should then do nothing: it ran in that earlier offboarding, before the drops. It is [false](https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool) while any of them exists, so with more than one, a step that runs again may find some already gone. It is [false](https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/bool) too when offboarding drops nothing for the tenant: no drop step is added, or none applies to the tenant's isolation.
 
 ### `Isolation`
 
